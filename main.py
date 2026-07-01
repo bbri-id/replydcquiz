@@ -3,6 +3,7 @@ import asyncio
 import random
 import os
 import re
+from google import genai
 from flask import Flask, render_template_string
 from threading import Thread
 from datetime import datetime
@@ -75,14 +76,18 @@ def run_web_server():
 Thread(target=run_web_server).start()
 
 # =========================================================
-# 2. CORE CODE SELF-BOT DISCORD
+# 2. CORE CODE SELF-BOT DISCORD & GEMINI
 # =========================================================
 TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
+API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
 TARGET_USER_ID = int(os.getenv('TARGET_USER_ID')) if os.getenv('TARGET_USER_ID') else None
 
 if not TOKEN_DISCORD or not TARGET_USER_ID:
     print("Error: Variabel lingkungan belum diisi lengkap!")
     exit(1)
+
+# Inisialisasi API client Gemini jika API key tersedia
+ai_client = genai.Client(api_key=API_KEY_GEMINI) if API_KEY_GEMINI else None
 
 current_trigger_task = None
 quiz_channel_id = None
@@ -90,7 +95,7 @@ quiz_channel_id = None
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('Mode Kecepatan Penuh Steril Aktif. Siap memburu kuis.')
+        print('Mode Hybrid Aktif (Cheat URL + Gemini Math). Siap berburu.')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id
@@ -98,7 +103,7 @@ class MySelfBot(discord.Client):
         if message.author.id == TARGET_USER_ID or message.content.strip() == "!c":
             quiz_channel_id = message.channel.id
 
-        # Batalkan timer !c kita jika kuis baru / perintah !c dari orang lain sudah muncul duluan
+        # Batalkan timer !c milik kita jika terdeteksi kuis baru atau ada orang lain mengetik !c duluan
         if current_trigger_task and not current_trigger_task.done():
             if message.content.strip() == "!c" or (message.author.id == TARGET_USER_ID and ("60 seconds" in message.content.lower() or message.embeds)):
                 current_trigger_task.cancel()
@@ -145,29 +150,41 @@ class MySelfBot(discord.Client):
                         final_answer = match.group(1).replace('_', ' ').title()
                         success = True
 
-            # 2. Jalur Matematika Lokal (PERBAIKAN TYPO OPERATOR PENGURANGAN)
-            if not success and "math challenge" in content_lower:
-                math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', full_text)
-                if math_match:
-                    angka1 = int(math_match.group(1))
-                    operator = math_match.group(2)
-                    angka2 = int(math_match.group(3))
-                    
-                    if operator == '+': hasil = angka1 + angka2
-                    elif operator == '-': hasil = angka1 - angka2 # DIBAIKI DI SINI
-                    elif operator == '*': hasil = angka1 * angka2
-                    elif operator == '/': hasil = angka1 // angka2
-                    
-                    final_answer = str(hasil)
-                    success = True
+            # 2. Kembalikan Jalur Math Challenge ke Gemini AI 🧠
+            if not success and "math" in content_lower and ai_client:
+                print("[GEMINI PROCESS] Memproses Math Challenge via Gemini AI...")
+                try:
+                    prompt = (
+                        f"Kamu adalah kalkulator kuis otomatis. Hitung atau selesaikan kuis matematika di bawah ini "
+                        f"dan HANYA berikan HASIL ANGKA NYA SAJA tanpa penjelasan, tanpa kalimat pengantar, "
+                        f"tanpa tanda titik di akhir, dan tanpa format Markdown.\n\n"
+                        f"Contoh Kuis: 17 + 7 = ?\nJawaban bersih: 24\n\n"
+                        f"Isi Kuis:\n{full_text}\n"
+                        f"Jawaban bersih:"
+                    )
 
-            # KIRIM INSTAN
+                    response = ai_client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=prompt,
+                    )
+                    
+                    final_answer = response.text.strip()
+                    if final_answer.endswith('.'):
+                        final_answer = final_answer[:-1]
+                    
+                    if final_answer:
+                        success = True
+                        print(f"[GEMINI PROCESS] Gemini berhasil menjawab: {final_answer}")
+                except Exception as e:
+                    print(f"[ERROR GEMINI] Gagal memproses kuis mtk lewat Gemini: {e}")
+
+            # KIRIM INSTAN KE DISCORD
             if final_answer and success:
                 try:
                     await message.channel.send(final_answer)
                     print(f"[SPEED] Jawaban kuis dikirim instan: '{final_answer}'")
                 except Exception as e:
-                    print(f"[ERROR SEND] Gagal mengirim jawaban secara instan: {e}")
+                    print(f"[ERROR SEND] Gagal mengirim jawaban instan (Kemungkinan Rate Limited): {e}")
                 return
 
         # =========================================================
@@ -201,7 +218,7 @@ class MySelfBot(discord.Client):
     async def smart_trigger_sequence(self):
         global quiz_channel_id
         try:
-            # Mengunci range tunggu aman di 6 - 10 detik
+            # Jeda acak 6 - 10 detik agar aman dari slowmode 5s grup
             wait_time = random.uniform(6, 10)
             print(f"[SMART TIMER] Mengatur waktu tunggu sepi: {round(wait_time, 2)} detik...")
             await asyncio.sleep(wait_time)
