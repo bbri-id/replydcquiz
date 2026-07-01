@@ -1,2 +1,3 @@
 discord.py-self
 google-genai
+flask
