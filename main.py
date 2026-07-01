@@ -103,6 +103,6 @@ class MySelfBot(discord.Client):
                 except Exception as e:
                     print(f"Gagal memproses AI atau mengirim pesan: {e}")
 
-intents = discord.Intents.all()
+intents = discord.intents.all()
 client = MySelfBot(intents=intents)
 client.run(TOKEN_DISCORD)
