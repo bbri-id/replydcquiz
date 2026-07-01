@@ -7,7 +7,7 @@ from flask import Flask
 from threading import Thread
 
 # =========================================================
-# 1. SETUP WEB SERVER MINI
+# 1. SETUP WEB SERVER MINI (Agar Render Free Tier Tetap Hidup)
 # =========================================================
 app = Flask('')
 
@@ -26,7 +26,6 @@ Thread(target=run_web_server).start()
 # =========================================================
 TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
 API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
-# PASTIKAN TARGET_USER_ID DI RENDER ADALAH ID MILIK BOT "LionNSEX"
 TARGET_USER_ID = int(os.getenv('TARGET_USER_ID')) if os.getenv('TARGET_USER_ID') else None
 
 if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID:
@@ -41,7 +40,7 @@ class MySelfBot(discord.Client):
         print('Menunggu Quiz Embed dari Bot LionNSEX...')
 
     async def on_message(self, message):
-        # Abaikan chat dari diri sendiri
+        # Abaikan jika pesan berasal dari diri sendiri
         if message.author.id == self.user.id:
             return
 
@@ -51,7 +50,7 @@ class MySelfBot(discord.Client):
 
         full_text = ""
 
-        # 1. Ambil teks jika kiriman berupa Embed (Kotak Quiz)
+        # 1. Ekstrak teks dari kotak Embed Quiz
         if message.embeds:
             for embed in message.embeds:
                 if embed.title:
@@ -64,26 +63,30 @@ class MySelfBot(discord.Client):
                 if embed.footer and embed.footer.text:
                     full_text += embed.footer.text + "\n"
 
-        # 2. Gabungkan dengan teks biasa (jika ada tambahan teks di luar embed)
+        # 2. Gabungkan dengan teks biasa jika ada
         if message.content:
             full_text += "\n" + message.content
 
-        # Pengecekan kata kunci di dalam seluruh teks embed
         content_lower = full_text.lower()
         
-        # Mencari unsur "60 seconds" ATAU kata kunci reward character
+        # Filter pemicu kuis: Mengandung "60 seconds" atau "!char"
         if "60 seconds" in content_lower or "!char" in content_lower:
-            print(f"Mendeteksi Quiz Baru dari {message.author.name}!")
+            print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
             
             async with message.channel.typing():
                 try:
-                    # Instruksi ketat ke Gemini untuk langsung menjawab quiz target
+                    # PROMPT SUPER KETAT: Memaksa Gemini hanya mengeluarkan jawaban murni
                     prompt = (
-                        f"Kamu adalah peserta kuis pintar di Discord. Pecahkan kuis di bawah ini "
-                        f"dan berikan JAWABANNYA SAJA secara instan (tanpa penjelasan, tanpa kata pengantar, tanpa tanda baca tambahan). "
-                        f"Jika kuis matematika, hitung hasilnya. Jika tebak gambar/bendera/logo, sebutkan nama entitasnya yang tepat.\n\n"
+                        f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
+                        f"dan HANYA memberikan satu atau dua kata jawaban intinya saja tanpa embel-embel, tanpa penjelasan, "
+                        f"tanpa tanda baca titik, tanpa kalimat pengantar, dan tanpa Markdown (jangan gunakan bold/italic).\n\n"
+                        f"Aturan Khusus:\n"
+                        f"- Jika kuis matematika (Math Challenge), berikan HASIL ANGKA NYA SAJA (contoh: 24).\n"
+                        f"- Jika kuis tebak logo/brand (Guess the Logo), sebutkan NAMA BRAND NYA SAJA (contoh: Chanel).\n"
+                        f"- Jika kuis tebak negara/bendera (Guess the Country), sebutkan NAMA NEGARANYA SAJA (contoh: Switzerland).\n"
+                        f"- Jika kuis tebak hewan (Guess the Animal), sebutkan NAMA HEWANNYA SAJA (contoh: Guppy).\n\n"
                         f"Isi Kuis:\n{full_text}\n"
-                        f"Jawaban singkat:"
+                        f"Jawaban bersih:"
                     )
 
                     response = ai_client.models.generate_content(
@@ -91,18 +94,24 @@ class MySelfBot(discord.Client):
                         contents=prompt,
                     )
                     
+                    # Bersihkan spasi atau karakter newline yang tidak diinginkan
                     jawaban_ai = response.text.strip()
                     
-                    # Beri jeda natural 2-4 detik agar tidak terlihat mencurigakan
+                    # Pengaman tambahan: Jika AI tidak sengaja memberikan titik di akhir, kita hapus
+                    if jawaban_ai.endswith('.'):
+                        jawaban_ai = jawaban_ai[:-1]
+                    
+                    # Jeda acak natural sebelum mengirim (2-4 detik)
                     await asyncio.sleep(random.uniform(2, 4))
                     
-                    # Kirim jawaban ke channel (bukan reply agar langsung terbaca sistem quiz)
+                    # KIRIM JAWABAN MURNI (Bukan Reply, langsung teks biasa agar match-case sistem bot)
                     await message.channel.send(jawaban_ai)
-                    print(f"Merespon Quiz dengan jawaban: {jawaban_ai}")
+                    print(f"[LOG RENDER] Berhasil menjawab kuis dengan teks: '{jawaban_ai}'")
 
                 except Exception as e:
-                    print(f"Gagal memproses AI atau mengirim pesan: {e}")
+                    # PENTING: Jika error, pooling/tampilkan HANYA di log Render. Jangan kirim ke Discord!
+                    print(f"[ERROR LOG RENDER] Gagal memproses kuis atau API bermasalah: {e}")
 
-intents = discord.intents.all()
-client = MySelfBot(intents=intents)
+# Inisialisasi tanpa parameter intents eksternal (mengatasi AttributeError sebelumnya)
+client = MySelfBot()
 client.run(TOKEN_DISCORD)
