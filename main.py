@@ -4,7 +4,7 @@ import random
 import os
 import re
 import json
-import google.generativeai as google_genai
+from google import genai  # Menggunakan library google-genai yang sudah terinstal
 from flask import Flask, render_template_string
 from threading import Thread
 from datetime import datetime
@@ -129,15 +129,15 @@ if not TOKEN_DISCORD or not TARGET_USER_ID:
     print("Error: Variabel lingkungan belum diisi lengkap!")
     exit(1)
 
+# Inisialisasi SDK google-genai dengan aman
 if API_KEY_GEMINI:
-    google_genai.configure(api_key=API_KEY_GEMINI)
-    gemini_model = google_genai.GenerativeModel('gemini-1.5-flash')
+    ai_client = genai.Client(api_key=API_KEY_GEMINI)
 else:
-    gemini_model = None
+    ai_client = None
 
 current_trigger_task = None
 quiz_channel_id = None
-is_paused = False  # Status global kendali pause bot
+is_paused = False  
 
 class MySelfBot(discord.Client):
     async def on_ready(self):
@@ -147,35 +147,29 @@ class MySelfBot(discord.Client):
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id, is_paused
         
-        # --- KENDALI KATA KUNCI REMOTE CONTROL (HANYA DARI AKUN ANDA SENDIRI) ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
                 is_paused = True
                 print("[REMOTE CONTROL] Terdeteksi 'rame'. Bot memasuki mode PAUSE (Idle).")
-                # Jika ada schedule timer !c yang menggantung, langsung bersihkan
                 if current_trigger_task and not current_trigger_task.done():
                     current_trigger_task.cancel()
                     current_trigger_task = None
             elif "capek" in msg_lower and is_paused:
                 is_paused = False
                 print("[REMOTE CONTROL] Terdeteksi 'capek'. Bot AKTIF kembali.")
-                # Picu kuis pertama setelah aktif kembali jika channel sudah terekam
                 if quiz_channel_id:
                     if current_trigger_task and not current_trigger_task.done():
                         current_trigger_task.cancel()
                     current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
             return
 
-        # Pastikan target chat hanya bersumber dari BOT TARGET (LionNSEX)
         if message.author.id != TARGET_USER_ID:
             return
 
-        # Rekam channel aktif
         if message.content.strip() == "!c" or message.embeds:
             quiz_channel_id = message.channel.id
 
-        # Interupsi timer otomatis jika terdeteksi aktivitas kuis baru dari room
         if current_trigger_task and not current_trigger_task.done():
             if message.content.strip() == "!c" or "60 seconds" in message.content.lower() or message.embeds:
                 current_trigger_task.cancel()
@@ -201,11 +195,11 @@ class MySelfBot(discord.Client):
         print(f"\n[LIVE DEBUG LIONNSEX] Teks Masuk:\n{full_text}\n-----------------------")
 
         # =========================================================
-        # ALUR A: MENJAWAB KUIS (DIPROTES RELEVAN OLEH STATUS PAUSE)
+        # ALUR A: MENJAWAB KUIS
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
             if is_paused:
-                print("[PAUSED MODE] Ada kuis masuk, tapi bot diabaikan karena status sedang RAME.")
+                print("[PAUSED MODE] Kuis diabaikan karena status sedang RAME.")
                 return
 
             final_answer = ""
@@ -230,14 +224,18 @@ class MySelfBot(discord.Client):
                             final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
                             success = True
 
-            if not success and "math" in content_lower and gemini_model:
+            # Menggunakan format pemanggilan baru google-genai yang benar
+            if not success and "math" in content_lower and ai_client:
                 try:
                     prompt = (
                         f"Kamu adalah kalkulator kuis otomatis. Selesaikan operasi aritmatika dari kuis berikut "
                         f"dan HANYA berikan HASIL ANGKA AKHIRNYA SAJA tanpa teks pengantar, tanpa penjelasan, "
                         f"tanpa tanda titik di akhir, dan jangan gunakan format Markdown.\n\nKuis:\n{full_text}"
                     )
-                    response = gemini_model.generate_content(prompt)
+                    response = ai_client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=prompt
+                    )
                     final_answer = response.text.strip()
                     if final_answer.endswith('.'): final_answer = final_answer[:-1]
                     if final_answer: success = True
@@ -258,7 +256,6 @@ class MySelfBot(discord.Client):
 
         if is_quiz_ended or is_quiz_timeout:
             
-            # Catat hadiah jika msdn menang (pencatatan tetap jalan meskipun dalam kondisi pause)
             if is_quiz_ended and "msdn" in content_lower:
                 ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                 rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
@@ -278,12 +275,10 @@ class MySelfBot(discord.Client):
                 save_loot_history(history)
                 print("[LOOT COMMITTED] Kemenangan msdn dicatat.")
 
-            # KONDISI PAUSE JALUR TIMING: Jika status sedang RAME, hentikan looping !c di sini
             if is_paused:
-                print("[PAUSED MODE] Kuis selesai. Pemicu otomatis !c ditiadakan.")
+                print("[PAUSED MODE] Kuis selesai. Pemicu otomatis ditiadakan.")
                 return
 
-            # Jalankan Smart Timer otomatis jika bot aktif (is_paused == False)
             if quiz_channel_id:
                 if current_trigger_task and not current_trigger_task.done():
                     current_trigger_task.cancel()
