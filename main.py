@@ -77,7 +77,48 @@ def run_web_server():
 Thread(target=run_web_server).start()
 
 # =========================================================
-# 2. CORE CODE SELF-BOT DISCORD & GEMINI
+# 2. DICTIONARY CHEAT CODE LOGO BRAND
+# =========================================================
+LOGO_MAP = {
+    "logo_101": "chanel", "logo_107": "champion", "logo_108": "lv", "logo_110": "levis",
+    "logo_111": "rolex", "logo_112": "dickies", "logo_114": "columbia", "logo_116": "hermes",
+    "logo_117": "palace", "logo_118": "kappa", "logo_119": "burberry", "logo_120": "puma",
+    "logo_121": "reebok", "logo_125": "diesel", "logo_126": "fila", "logo_127": "versace",
+    "logo_129": "hollister", "logo_133": "nike", "logo_136": "ck", "logo_138": "fred perry",
+    
+    "logo_201": "apple", "logo_202": "dolby", "logo_203": "philips", "logo_204": "alibaba",
+    "logo_206": "cisco", "logo_207": "intel", "logo_208": "adobe", "logo_209": "alcatel",
+    "logo_210": "amazon", "logo_211": "amd", "logo_212": "asus", "logo_214": "dell",
+    "logo_215": "fitbit", "logo_216": "fujitsu", "logo_217": "airbnb", "logo_218": "huawei",
+    "logo_219": "t_mobile", "logo_220": "lg", "logo_221": "microsoft", "logo_222": "motorola",
+    "logo_223": "nvidia", "logo_224": "oneplus", "logo_225": "paypal", "logo_227": "samsung",
+    "logo_228": "seagate", "logo_229": "ericsson", "logo_230": "beats", "logo_231": "xiaomi",
+    "logo_232": "uber", "logo_233": "youtube", "logo_234": "twitter", "logo_235": "Blackberry",
+    "logo_236": "dropbox", "logo_237": "facebook", "logo_238": "google", "logo_239": "snapchat",
+    
+    "logo_301": "netflix", "logo_302": "nintendo", "logo_303": "universal", "logo_304": "walking dead",
+    "logo_305": "gameloft", "logo_306": "game of thrones", "logo_307": "discovery", "logo_308": "monopoly",
+    "logo_309": "konami", "logo_311": "bandai", "logo_313": "warner bros", "logo_314": "rockstar",
+    "logo_315": "ff", "logo_317": "activision", "logo_319": "walt disney", "logo_321": "hbo max",
+    "logo_323": "jurassic", "logo_324": "fox", "logo_326": "marvel", "logo_328": "paramount",
+    "logo_329": "sega", "logo_330": "star wars", "logo_331": "tencent", "logo_332": "terminator",
+    "logo_333": "tiktok", "logo_334": "titanic", "logo_335": "soundcloud", "logo_336": "ubisoft",
+    "logo_337": "lego", "logo_338": "discord", "logo_339": "spotify",
+    
+    "logo_402": "cadillac", "logo_403": "chevrolet", "logo_404": "mini", "logo_405": "porsche",
+    "logo_406": "citroen", "logo_408": "infiniti", "logo_409": "jaguar", "logo_410": "volkswagen",
+    "logo_411": "lexus", "logo_412": "peugeot", "logo_413": "mitsubishi", "logo_414": "suzuki",
+    "logo_415": "aston martin", "logo_416": "bentley", "logo_417": "bugatti", "logo_418": "audi",
+    "logo_420": "dodge", "logo_421": "ferrari", "logo_422": "fiat", "logo_423": "ford",
+    "logo_424": "honda", "logo_425": "hyundai", "logo_426": "koenigsegg", "logo_430": "mazda",
+    "logo_431": "nissan", "logo_432": "opel", "logo_433": "renault", "logo_435": "seat",
+    "logo_437": "subaru", "logo_438": "volvo", "logo_439": "bmw",
+    
+    "logo_501": "harley", "logo_502": "nescafe"
+}
+
+# =========================================================
+# 3. CORE CODE SELF-BOT DISCORD & GEMINI
 # =========================================================
 TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
 API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
@@ -96,7 +137,7 @@ quiz_channel_id = None
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== LIVE DEBUG MODE REWARD AKTIF ===')
+        print('=== ALL CHEAT CODES READY (MATH BY GEMINI, FLAGS/ANIMALS/LOGOS BY URL) ===')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id
@@ -112,7 +153,6 @@ class MySelfBot(discord.Client):
         if message.author.id == self.user.id:
             return
 
-        # Ambil semua teks dari pesan biasa maupun embed LionNSEX
         full_text = ""
         image_url = ""
 
@@ -130,29 +170,43 @@ class MySelfBot(discord.Client):
 
         content_lower = full_text.lower()
 
-        # 🛑 === LIVE LOG INTERCEPTOR (INI YANG AKAN MEMUNCULKAN CHAT DI LOG RENDER) ===
         if message.author.id == TARGET_USER_ID:
             print(f"\n[LIVE DEBUG LIONNSEX] Teks Masuk:\n{full_text}\n-----------------------")
 
         # =========================================================
-        # ALUR A: MENJAWAB KUIS
+        # ALUR A: MENJAWAB KUIS (DENGAN JEDA PENGAMAN DELAY SMART)
         # =========================================================
         if message.author.id == TARGET_USER_ID and ("60 seconds" in content_lower or "!char" in content_lower):
             final_answer = ""
             success = False
 
             if image_url:
+                # 1. Jalur Cheat URL Negara (Flags)
                 if "challenge/flags/flag_" in image_url:
                     match = re.search(r'flag_([^.]+)\.png', image_url)
                     if match:
                         final_answer = match.group(1).replace('_', ' ').title()
                         success = True
+                
+                # 2. Jalur Cheat URL Hewan (Animals)
                 elif "challenge/animals/animal_" in image_url:
                     match = re.search(r'animal_([^.]+)\.jpg', image_url)
                     if match:
                         final_answer = match.group(1).replace('_', ' ').title()
                         success = True
+                
+                # 3. BARU: Jalur Cheat URL Logo Brand (Logos)
+                elif "challenge/logos/logo_" in image_url:
+                    match = re.search(r'(logo_\d+)\.png', image_url)
+                    if match:
+                        logo_key = match.group(1)
+                        if logo_key in LOGO_MAP:
+                            # Ambil jawaban dan rapikan format kapitalnya (.title())
+                            final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
+                            success = True
+                            print(f"[CHEAT LOGO] Terdeteksi {logo_key} -> Jawab: {final_answer}")
 
+            # 4. Jalur Matematika (Tetap mengandalkan Gemini AI)
             if not success and "math" in content_lower and ai_client:
                 try:
                     prompt = (
@@ -167,20 +221,23 @@ class MySelfBot(discord.Client):
                 except Exception as e:
                     print(f"[ERROR GEMINI] {e}")
 
+            # KIRIM JAWABAN DENGAN JEDA 0.1 - 1.0 DETIK (PENGAMAN 429)
             if final_answer and success:
                 try:
+                    answer_delay = random.uniform(0.1, 1.0)
+                    await asyncio.sleep(answer_delay)
+                    
                     await message.channel.send(final_answer)
-                    print(f"[SPEED] Mencoba kirim jawaban: '{final_answer}'")
+                    print(f"[SPEED] Jawaban kuis '{final_answer}' terkirim setelah jeda {round(answer_delay, 2)}s.")
                 except Exception as e:
                     print(f"[ERROR SEND] {e}")
                 return
 
         # =========================================================
-        # ALUR B: PENGECEKAN LOOT (DENGAN STRATEGI JAGA-JAGA)
+        # ALUR B: PENGECEKAN LOOT & SMART TIMER
         # =========================================================
         if message.author.id == TARGET_USER_ID and ("got it first!" in content_lower or "reward:" in content_lower):
             
-            # Kita buat pencarian "msdn" menjadi case-insensitive (.lower()) agar jika keluar "MSDN" atau "Msdn" tetap tertangkap
             if "msdn" in content_lower and "got it first!" in content_lower:
                 print("[🏆 DEBUG WINNER] Deteksi kemenangan msdn terpicu di script!")
                 ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
