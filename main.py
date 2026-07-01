@@ -4,13 +4,13 @@ import random
 import os
 import re
 import json
-from google import genai  # Menggunakan library google-genai yang sudah terinstal
+from google import genai
 from flask import Flask, render_template_string
 from threading import Thread
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # =========================================================
-# 1. SETUP WEB SERVER MINI & REKAPAN HADIAH
+# 1. SETUP WEB SERVER MINI & REKAPAN HADIAH (WIB TIME)
 # =========================================================
 app = Flask('')
 DB_FILE = "loot_history.json"
@@ -46,11 +46,11 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-    <h2>🏆 Rekapan Hadiah Kuis (User: msdn)</h2>
+    <h2>🏆 Rekapan Hadiah Kuis (User: msdn) - Waktu GMT+7 (WIB)</h2>
     <div class="table-container">
         <table>
             <thead>
-                <tr><th>Waktu (UTC)</th><th>Jawaban</th><th>Hadiah / Reward</th></tr>
+                <tr><th>Waktu (WIB)</th><th>Jawaban</th><th>Hadiah / Reward</th></tr>
             </thead>
             <tbody>
                 {% if loots %}
@@ -129,7 +129,6 @@ if not TOKEN_DISCORD or not TARGET_USER_ID:
     print("Error: Variabel lingkungan belum diisi lengkap!")
     exit(1)
 
-# Inisialisasi SDK google-genai dengan aman
 if API_KEY_GEMINI:
     ai_client = genai.Client(api_key=API_KEY_GEMINI)
 else:
@@ -142,16 +141,17 @@ is_paused = False
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== REMOTE CONTROL AKTIF ("rame" -> PAUSE | "capek" -> START) ===')
+        print('=== SIKLUS FIX GEMINI & LOGGER GMT+7 WIB BERJALAN ===')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id, is_paused
         
+        # --- SAKLAR REMOTE CONTROL ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
                 is_paused = True
-                print("[REMOTE CONTROL] Terdeteksi 'rame'. Bot memasuki mode PAUSE (Idle).")
+                print("[REMOTE CONTROL] Terdeteksi 'rame'. Bot memasuki mode PAUSE.")
                 if current_trigger_task and not current_trigger_task.done():
                     current_trigger_task.cancel()
                     current_trigger_task = None
@@ -224,28 +224,38 @@ class MySelfBot(discord.Client):
                             final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
                             success = True
 
-            # Menggunakan format pemanggilan baru google-genai yang benar
+            # PERBAIKAN TOTAL SINTAKS GOOGLE-GENAI UNTUK MATH CHALLENGE
             if not success and "math" in content_lower and ai_client:
+                print("[GEMINI PROCESS] Mengirim kuis mtk ke Gemini AI Studio...")
                 try:
                     prompt = (
                         f"Kamu adalah kalkulator kuis otomatis. Selesaikan operasi aritmatika dari kuis berikut "
                         f"dan HANYA berikan HASIL ANGKA AKHIRNYA SAJA tanpa teks pengantar, tanpa penjelasan, "
                         f"tanpa tanda titik di akhir, dan jangan gunakan format Markdown.\n\nKuis:\n{full_text}"
                     )
+                    # Memakai pemanggilan model genai yang tepat
                     response = ai_client.models.generate_content(
                         model='gemini-2.5-flash',
                         contents=prompt
                     )
-                    final_answer = response.text.strip()
-                    if final_answer.endswith('.'): final_answer = final_answer[:-1]
-                    if final_answer: success = True
-                except: pass
+                    # Cara ekstrak teks yang benar pada library google-genai
+                    if response and response.text:
+                        final_answer = response.text.strip()
+                        if final_answer.endswith('.'): 
+                            final_answer = final_answer[:-1]
+                        if final_answer: 
+                            success = True
+                            print(f"[GEMINI SUCCESS] Hasil ekstraksi Gemini: '{final_answer}'")
+                except Exception as gemini_err: 
+                    print(f"[ERROR GEMINI SDK] Gagal memproses AI: {gemini_err}")
 
             if final_answer and success:
                 try:
                     await asyncio.sleep(random.uniform(0.1, 1.0))
                     await message.channel.send(final_answer)
-                except: pass
+                    print(f"[SPEED] Menembak jawaban ke Discord: '{final_answer}'")
+                except Exception as send_err: 
+                    print(f"[ERROR SEND DISCORD] Gagal kirim chat: {send_err}")
                 return
 
         # =========================================================
@@ -266,17 +276,20 @@ class MySelfBot(discord.Client):
                 if "sent to your main" in str_reward.lower():
                     str_reward = str_reward.split("Sent to your")[0].strip()
 
+                # KONVERSI KE WAKTU LOCAL WIB (GMT+7)
+                wib_time = datetime.utcnow() + timedelta(hours=7)
+
                 history = load_loot_history()
                 history.insert(0, {
-                    "time": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                    "time": wib_time.strftime('%Y-%m-%d %H:%M:%S'),
                     "answer": str_answer,
                     "reward": str_reward
                 })
                 save_loot_history(history)
-                print("[LOOT COMMITTED] Kemenangan msdn dicatat.")
+                print("[LOOT COMMITTED] Kemenangan msdn dicatat dalam format waktu WIB.")
 
             if is_paused:
-                print("[PAUSED MODE] Kuis selesai. Pemicu otomatis ditiadakan.")
+                print("[PAUSED MODE] Kuis selesai. Loop !c ditiadakan.")
                 return
 
             if quiz_channel_id:
