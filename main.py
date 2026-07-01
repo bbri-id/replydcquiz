@@ -3,18 +3,70 @@ import asyncio
 import random
 import os
 import re
-from google import genai
-from flask import Flask
+from flask import Flask, render_template_string
 from threading import Thread
+from datetime import datetime
 
 # =========================================================
-# 1. SETUP WEB SERVER MINI
+# 1. SETUP WEB SERVER MINI & REKAPAN HADIAH (HTML VIEW)
 # =========================================================
 app = Flask('')
+loot_history = []
+
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Loot Kuis Logger</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e24; color: #fff; margin: 20px; }
+        h2 { color: #5865F2; border-bottom: 2px solid #5865F2; padding-bottom: 10px; }
+        .table-container { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background-color: #2f3136; border-radius: 8px; overflow: hidden; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; }
+        th { background-color: #5865F2; color: white; }
+        tr:hover { background-color: #35383e; }
+        .timestamp { color: #b9bbbe; font-size: 0.85em; }
+        .reward { color: #43b581; font-weight: bold; }
+        .no-data { text-align: center; padding: 20px; color: #72767d; }
+    </style>
+</head>
+<body>
+    <h2>🏆 Rekapan Hadiah Kuis (User: msdn)</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Waktu (UTC)</th>
+                    <th>Jawaban</th>
+                    <th>Hadiah / Reward</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if loots %}
+                    {% for loot in loots %}
+                    <tr>
+                        <td class="timestamp">{{ loot.time }}</td>
+                        <td><code>{{ loot.answer }}</code></td>
+                        <td class="reward">{{ loot.reward }}</td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="3" class="no-data">Belum ada hadiah yang tercatat. Kuis sedang berjalan...</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
+"""
 
 @app.route('/')
 def home():
-    return "Bot is alive and running!"
+    return render_template_string(HTML_TEMPLATE, loots=loot_history)
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -23,129 +75,139 @@ def run_web_server():
 Thread(target=run_web_server).start()
 
 # =========================================================
-# 2. CORE CODE SELF-BOT DISCORD & GEMINI
+# 2. CORE CODE SELF-BOT DISCORD
 # =========================================================
 TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
-API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
 TARGET_USER_ID = int(os.getenv('TARGET_USER_ID')) if os.getenv('TARGET_USER_ID') else None
 
-if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID:
-    print("Error: Variabel lingkungan (Environment Variables) belum diisi lengkap!")
+if not TOKEN_DISCORD or not TARGET_USER_ID:
+    print("Error: Variabel lingkungan belum diisi lengkap!")
     exit(1)
 
-ai_client = genai.Client(api_key=API_KEY_GEMINI)
+current_trigger_task = None
+quiz_channel_id = None
 
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('Menunggu Quiz Embed dari Bot LionNSEX dengan Fitur Cheat Code Kapital...')
+        print('Mode Kecepatan Penuh Aktif. Jawaban Instan & Pemicu !c Max 10 Detik.')
 
     async def on_message(self, message):
-        if message.author.id == self.user.id:
-            return
+        global current_trigger_task, quiz_channel_id
+        
+        if message.author.id == TARGET_USER_ID or message.content.strip() == "!c":
+            quiz_channel_id = message.channel.id
 
-        if message.author.id != TARGET_USER_ID:
+        # Batalkan timer !c kita jika kuis baru / perintah !c dari orang lain sudah muncul duluan
+        if current_trigger_task and not current_trigger_task.done():
+            if message.content.strip() == "!c" or (message.author.id == TARGET_USER_ID and ("60 seconds" in message.content.lower() or message.embeds)):
+                current_trigger_task.cancel()
+                current_trigger_task = None
+                print("[SMART TIMER] Ada aktivitas kuis baru/!c dari user lain. Timer kita dibatalkan.")
+
+        if message.author.id == self.user.id:
             return
 
         full_text = ""
         image_url = ""
 
-        # 1. Ekstrak teks dan URL Gambar dari Embed Quiz
         if message.embeds:
             for embed in message.embeds:
-                if embed.title:
-                    full_text += embed.title + "\n"
-                if embed.description:
-                    full_text += embed.description + "\n"
+                if embed.title: full_text += embed.title + "\n"
+                if embed.description: full_text += embed.description + "\n"
                 if embed.fields:
-                    for field in embed.fields:
-                        full_text += f"{field.name}: {field.value}\n"
-                if embed.footer and embed.footer.text:
-                    full_text += embed.footer.text + "\n"
-                
-                # Cek apakah ada gambar di dalam embed
-                if embed.image and embed.image.url:
-                    image_url = embed.image.url
+                    for field in embed.fields: full_text += f"{field.name}: {field.value}\n"
+                if embed.footer and embed.footer.text: full_text += embed.footer.text + "\n"
+                if embed.image and embed.image.url: image_url = embed.image.url
 
         if message.content:
             full_text += "\n" + message.content
 
         content_lower = full_text.lower()
-        
-        # Pemicu kuis aktif
-        if "60 seconds" in content_lower or "!char" in content_lower:
-            print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
-            
-            final_answer = ""
-            used_cheat = False
+        quiz_channel_id = message.channel.id
 
-            # =========================================================
-            # STRATEGI 1: JALUR CHEAT CODE (NEGARA & HEWAN VIA URL)
-            # =========================================================
+        # =========================================================
+        # ALUR A: MENJAWAT KUIS - INSTAN TANPA DELAY ⚡
+        # =========================================================
+        if message.author.id == TARGET_USER_ID and ("60 seconds" in content_lower or "!char" in content_lower):
+            final_answer = ""
+            success = False
+
+            # 1. Jalur Cheat URL (Negara & Hewan)
             if image_url:
-                print(f"[LOG RENDER] Menemukan URL Gambar: {image_url}")
-                
-                # A. Deteksi Kuis Negara (Flags)
                 if "challenge/flags/flag_" in image_url:
                     match = re.search(r'flag_([^.]+)\.png', image_url)
                     if match:
-                        raw_answer = match.group(1)
-                        # Ganti _ jadi spasi & kapital di awal kata (contoh: Sierra Leone)
-                        final_answer = raw_answer.replace('_', ' ').title()
-                        used_cheat = True
-                        print(f"[CHEAT CODE] Berhasil mengekstrak kuis Negara: {final_answer}")
-
-                # B. Deteksi Kuis Hewan (Animals)
+                        final_answer = match.group(1).replace('_', ' ').title()
+                        success = True
                 elif "challenge/animals/animal_" in image_url:
                     match = re.search(r'animal_([^.]+)\.jpg', image_url)
                     if match:
-                        raw_answer = match.group(1)
-                        # Ganti _ jadi spasi & KAPITAL DI AWAL KATA (contoh: Hyena / Guppy)
-                        final_answer = raw_answer.replace('_', ' ').title()
-                        used_cheat = True
-                        print(f"[CHEAT CODE] Berhasil mengekstrak kuis Hewan: {final_answer}")
+                        final_answer = match.group(1).replace('_', ' ').title()
+                        success = True
 
-            # =========================================================
-            # STRATEGI 2: JALUR GEMINI AI (MATH CHALLENGE / LOGO / TEXT)
-            # =========================================================
-            if not used_cheat:
-                print("[LOG RENDER] Tidak ada cheat URL yang cocok. Menggunakan Gemini AI...")
-                try:
-                    prompt = (
-                        f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
-                        f"dan HANYA memberikan satu atau dua kata jawaban intinya saja tanpa embel-embel, tanpa penjelasan, "
-                        f"tanpa tanda baca titik, tanpa kalimat pengantar, dan tanpa Markdown. Pastikan gunakan huruf kapital di awal setiap kata jawaban.\n\n"
-                        f"Aturan Khusus:\n"
-                        f"- Jika kuis matematika (Math Challenge), berikan HASIL ANGKA NYA SAJA (contoh: 24).\n"
-                        f"- Jika kuis tebak logo/brand (Guess the Logo), sebutkan NAMA BRAND NYA SAJA dengan kapital diawal (contoh: Chanel).\n\n"
-                        f"Isi Kuis:\n{full_text}\n"
-                        f"Jawaban bersih:"
-                    )
+            # 2. Jalur Matematika Lokal
+            if not success and "math challenge" in content_lower:
+                math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', full_text)
+                if math_match:
+                    angka1, operator, angka2 = int(math_match.group(1)), math_match.group(2), int(math_match.group(3))
+                    if operator == '+': hasil = angka1 + angka2
+                    elif operator == '-': hasil = angka1 - arithmetic_operator
+                    elif operator == '*': hasil = angka1 * angka2
+                    elif operator == '/': hasil = angka1 // angka2
+                    final_answer = str(hasil)
+                    success = True
 
-                    response = ai_client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=prompt,
-                    )
-                    
-                    final_answer = response.text.strip()
-                    if final_answer.endswith('.'):
-                        final_answer = final_answer[:-1]
-
-                except Exception as e:
-                    print(f"[ERROR LOG RENDER] Gagal memproses kuis via Gemini: {e}")
-                    return
-
-            # =========================================================
-            # PROSES PENGIRIMAN JAWABAN (STERIL)
-            # =========================================================
-            if final_answer:
-                # Jeda acak natural agar tidak dianggap bot spam ilegal oleh Discord
-                await asyncio.sleep(random.uniform(2, 4))
-                
-                # Kirim hanya jawaban bersih ke channel kuis
+            # KIRIM INSTAN TANPA ASYNCIO.SLEEP
+            if final_answer and success:
                 await message.channel.send(final_answer)
-                print(f"[LOG RENDER] Berhasil mengirim jawaban ke Discord: '{final_answer}'")
+                print(f"[SPEED] Jawaban kuis dikirim instan: '{final_answer}'")
+                return
 
-# Jalankan bot
+        # =========================================================
+        # ALUR B: REKAPAN HADIAH & SMART TIMER MAX 10 DETIK ⏱️
+        # =========================================================
+        if message.author.id == TARGET_USER_ID and ("got it first!" in content_lower or "reward:" in content_lower):
+            
+            if "msdn got it first!" in content_lower:
+                print("[🏆 WINNER] Anda (msdn) menang!")
+                ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                
+                str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
+                str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
+                
+                if "sent to your main" in str_reward.lower():
+                    str_reward = str_reward.split("Sent to your")[0].strip()
+
+                loot_history.insert(0, {
+                    "time": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
+                    "answer": str_answer,
+                    "reward": str_reward
+                })
+
+            if quiz_channel_id:
+                if current_trigger_task and not current_trigger_task.done():
+                    current_trigger_task.cancel()
+                
+                current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
+
+    # Fungsi khusus pemicu sepi kuis (Range diubah ke 6 - 10 Detik)
+    async def smart_trigger_sequence(self):
+        global quiz_channel_id
+        try:
+            # Jeda acak minimal 6 detik (lolos slowmode) dan maksimal 10 detik
+            wait_time = random.uniform(6, 10)
+            print(f"[SMART TIMER] Mengatur waktu tunggu sepi: {round(wait_time, 2)} detik...")
+            await asyncio.sleep(wait_time)
+            
+            if quiz_channel_id:
+                target_channel = self.get_channel(quiz_channel_id)
+                if target_channel:
+                    await target_channel.send("!c")
+                    print("[SMART TIMER] Room sepi melebihi batas waktu! Mengirim !c...")
+        except asyncio.CancelledError:
+            pass
+
 client = MySelfBot()
 client.run(TOKEN_DISCORD)
