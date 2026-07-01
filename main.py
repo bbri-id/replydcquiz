@@ -9,7 +9,7 @@ from threading import Thread
 from datetime import datetime
 
 # =========================================================
-# 1. SETUP WEB SERVER MINI & REKAPAN HADIAH (FILE BASED)
+# 1. SETUP WEB SERVER MINI & REKAPAN HADIAH
 # =========================================================
 app = Flask('')
 DB_FILE = "loot_history.json"
@@ -17,19 +17,14 @@ DB_FILE = "loot_history.json"
 def load_loot_history():
     if os.path.exists(DB_FILE):
         try:
-            with open(DB_FILE, "r") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"[ERROR DB] Gagal membaca file JSON: {e}")
-            return []
+            with open(DB_FILE, "r") as f: return json.load(f)
+        except: return []
     return []
 
 def save_loot_history(data):
     try:
-        with open(DB_FILE, "w") as f:
-            json.dump(data, f, indent=4)
-    except Exception as e:
-        print(f"[ERROR DB] Gagal menulis ke file JSON: {e}")
+        with open(DB_FILE, "w") as f: json.dump(data, f, indent=4)
+    except Exception as e: print(f"[ERROR DB] {e}")
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -47,7 +42,6 @@ HTML_TEMPLATE = """
         tr:hover { background-color: #35383e; }
         .timestamp { color: #b9bbbe; font-size: 0.85em; }
         .reward { color: #43b581; font-weight: bold; }
-        .no-data { text-align: center; padding: 20px; color: #72767d; }
     </style>
 </head>
 <body>
@@ -55,25 +49,15 @@ HTML_TEMPLATE = """
     <div class="table-container">
         <table>
             <thead>
-                <tr>
-                    <th>Waktu (UTC)</th>
-                    <th>Jawaban</th>
-                    <th>Hadiah / Reward</th>
-                </tr>
+                <tr><th>Waktu (UTC)</th><th>Jawaban</th><th>Hadiah / Reward</th></tr>
             </thead>
             <tbody>
                 {% if loots %}
                     {% for loot in loots %}
-                    <tr>
-                        <td class="timestamp">{{ loot.time }}</td>
-                        <td><code>{{ loot.answer }}</code></td>
-                        <td class="reward">{{ loot.reward }}</td>
-                    </tr>
+                    <tr><td>{{ loot.time }}</td><td><code>{{ loot.answer }}</code></td><td class="reward">{{ loot.reward }}</td></tr>
                     {% endfor %}
                 {% else %}
-                    <tr>
-                        <td colspan="3" class="no-data">Belum ada hadiah yang tercatat untuk sesi ini. Silakan menangkan kuis terlebih dahulu!</td>
-                    </tr>
+                    <tr><td colspan="3" style="text-align:center; padding:20px; color:#72767d;">Belum ada hadiah ter-log. Pantau Live Log Render!</td></tr>
                 {% endif %}
             </tbody>
         </table>
@@ -84,9 +68,7 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def home():
-    # Selalu muat data terbaru dari file JSON saat halaman diakses
-    current_loots = load_loot_history()
-    return render_template_string(HTML_TEMPLATE, loots=current_loots)
+    return render_template_string(HTML_TEMPLATE, loots=load_loot_history())
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -114,7 +96,7 @@ quiz_channel_id = None
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('Mode Logger JSON File Aktif. Siap mencatat loot secara permanen per sesi.')
+        print('=== LIVE DEBUG MODE REWARD AKTIF ===')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id
@@ -126,11 +108,11 @@ class MySelfBot(discord.Client):
             if message.content.strip() == "!c" or (message.author.id == TARGET_USER_ID and ("60 seconds" in message.content.lower() or message.embeds)):
                 current_trigger_task.cancel()
                 current_trigger_task = None
-                print("[SMART TIMER] Ada aktivitas kuis baru/!c dari user lain. Timer kita dibatalkan.")
 
         if message.author.id == self.user.id:
             return
 
+        # Ambil semua teks dari pesan biasa maupun embed LionNSEX
         full_text = ""
         image_url = ""
 
@@ -148,8 +130,12 @@ class MySelfBot(discord.Client):
 
         content_lower = full_text.lower()
 
+        # 🛑 === LIVE LOG INTERCEPTOR (INI YANG AKAN MEMUNCULKAN CHAT DI LOG RENDER) ===
+        if message.author.id == TARGET_USER_ID:
+            print(f"\n[LIVE DEBUG LIONNSEX] Teks Masuk:\n{full_text}\n-----------------------")
+
         # =========================================================
-        # ALUR A: MENJAWAB KUIS - INSTAN
+        # ALUR A: MENJAWAB KUIS
         # =========================================================
         if message.author.id == TARGET_USER_ID and ("60 seconds" in content_lower or "!char" in content_lower):
             final_answer = ""
@@ -168,37 +154,35 @@ class MySelfBot(discord.Client):
                         success = True
 
             if not success and "math" in content_lower and ai_client:
-                print("[GEMINI PROCESS] Memproses Math Challenge via Gemini AI...")
                 try:
                     prompt = (
                         f"Kamu adalah kalkulator kuis otomatis. Hitung atau selesaikan kuis matematika di bawah ini "
                         f"dan HANYA berikan HASIL ANGKA NYA SAJA tanpa penjelasan, tanpa kalimat pengantar, "
-                        f"tanpa tanda titik di akhir, dan tanpa format Markdown.\n\n"
-                        f"Isi Kuis:\n{full_text}\n"
-                        f"Jawaban bersih:"
+                        f"tanpa tanda titik di akhir, dan tanpa format Markdown.\n\nIsi Kuis:\n{full_text}\nJawaban bersih:"
                     )
                     response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     final_answer = response.text.strip()
                     if final_answer.endswith('.'): final_answer = final_answer[:-1]
                     if final_answer: success = True
                 except Exception as e:
-                    print(f"[ERROR GEMINI] Gagal memproses kuis mtk lewat Gemini: {e}")
+                    print(f"[ERROR GEMINI] {e}")
 
             if final_answer and success:
                 try:
                     await message.channel.send(final_answer)
-                    print(f"[SPEED] Jawaban kuis dikirim instan: '{final_answer}'")
+                    print(f"[SPEED] Mencoba kirim jawaban: '{final_answer}'")
                 except Exception as e:
-                    print(f"[ERROR SEND] Gagal mengirim jawaban instan: {e}")
+                    print(f"[ERROR SEND] {e}")
                 return
 
         # =========================================================
-        # ALUR B: REKAPAN HADIAH & PROSES SIMPAN KE FILE JSON 💾
+        # ALUR B: PENGECEKAN LOOT (DENGAN STRATEGI JAGA-JAGA)
         # =========================================================
         if message.author.id == TARGET_USER_ID and ("got it first!" in content_lower or "reward:" in content_lower):
             
-            if "msdn got it first!" in content_lower:
-                print("[🏆 WINNER] Anda (msdn) menang! Menyimpan ke database local...")
+            # Kita buat pencarian "msdn" menjadi case-insensitive (.lower()) agar jika keluar "MSDN" atau "Msdn" tetap tertangkap
+            if "msdn" in content_lower and "got it first!" in content_lower:
+                print("[🏆 DEBUG WINNER] Deteksi kemenangan msdn terpicu di script!")
                 ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                 rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                 
@@ -208,7 +192,6 @@ class MySelfBot(discord.Client):
                 if "sent to your main" in str_reward.lower():
                     str_reward = str_reward.split("Sent to your")[0].strip()
 
-                # Baca data lama, selipkan data baru di paling atas, lalu simpan kembali
                 history = load_loot_history()
                 history.insert(0, {
                     "time": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
@@ -216,7 +199,7 @@ class MySelfBot(discord.Client):
                     "reward": str_reward
                 })
                 save_loot_history(history)
-                print(f"[LOOT COMMITTED] Hadiah aman tertulis di local file.")
+                print("[LOOT COMMITTED] Berhasil menyimpan data kemenangan msdn!")
 
             if quiz_channel_id:
                 if current_trigger_task and not current_trigger_task.done():
@@ -231,10 +214,8 @@ class MySelfBot(discord.Client):
             if quiz_channel_id:
                 target_channel = self.get_channel(quiz_channel_id)
                 if target_channel:
-                    try:
-                        await target_channel.send("!c")
-                    except Exception as e:
-                        print(f"[ERROR TRIGGER] Gagal mengirim !c saat sepi: {e}")
+                    try: await target_channel.send("!c")
+                    except: pass
         except asyncio.CancelledError:
             pass
 
