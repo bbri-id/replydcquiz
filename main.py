@@ -3,11 +3,32 @@ import asyncio
 import random
 import os
 from google import genai
+from flask import Flask
+from threading import Thread
 
-# Mengambil token dari Environment Variables Zeabur
+# =========================================================
+# 1. SETUP WEB SERVER MINI (Agar Render Free Tier Tidak Tidur)
+# =========================================================
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive and running!"
+
+def run_web_server():
+    # Render mendeteksi aplikasi lewat port, defaultnya 10000 atau dari env PORT
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+# Jalankan web server di thread terpisah sebelum bot Discord jalan
+Thread(target=run_web_server).start()
+
+# =========================================================
+# 2. CORE CODE SELF-BOT DISCORD & GEMINI
+# =========================================================
 TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
 API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
-TARGET_USER_ID = int(os.getenv('TARGET_USER_ID')) # Diubah ke integer
+TARGET_USER_ID = int(os.getenv('TARGET_USER_ID')) if os.getenv('TARGET_USER_ID') else None
 
 if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID:
     print("Error: Variabel lingkungan (Environment Variables) belum diisi lengkap!")
@@ -26,7 +47,7 @@ class MySelfBot(discord.Client):
 
         if message.author.id == TARGET_USER_ID and "60 seconds" in message.content.lower():
             print(f"Menerima pesan dari {message.author.name}: '{message.content}'")
-
+            
             async with message.channel.typing():
                 try:
                     prompt = (
@@ -41,7 +62,7 @@ class MySelfBot(discord.Client):
                         model='gemini-2.5-flash',
                         contents=prompt,
                     )
-
+                    
                     jawaban_ai = response.text.strip()
                     await asyncio.sleep(random.uniform(3, 6))
                     await message.reply(jawaban_ai)
