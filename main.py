@@ -4,6 +4,7 @@ import random
 import os
 import re
 import json
+import google.generativeai as google_genai
 from flask import Flask, render_template_string
 from threading import Thread
 from datetime import datetime
@@ -98,7 +99,7 @@ LOGO_MAP = {
     
     "logo_301": "netflix", "logo_302": "nintendo", "logo_303": "universal", "logo_304": "walking dead",
     "logo_305": "gameloft", "logo_306": "game of thrones", "logo_307": "discovery", "logo_308": "monopoly",
-    "logo_309": "konami", "logo_311": "bandai", "logo_313": "warner bros", "logo_314": "rockstar",
+    "logo_309": "konami", "logo_311": "bandai", "choice_313": "warner bros", "logo_314": "rockstar",
     "logo_315": "ff", "logo_317": "activision", "logo_319": "walt disney", "logo_321": "hbo max",
     "logo_323": "jurassic", "logo_324": "fox", "logo_326": "marvel", "logo_328": "paramount",
     "logo_329": "sega", "logo_330": "star wars", "logo_331": "tencent", "logo_332": "terminator",
@@ -118,7 +119,7 @@ LOGO_MAP = {
 }
 
 # =========================================================
-# 3. CORE CODE SELF-BOT DISCORD & GEMINI
+# 3. CORE CODE SELF-BOT DISCORD & GEMINI CONFIG
 # =========================================================
 TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
 API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
@@ -128,8 +129,11 @@ if not TOKEN_DISCORD or not TARGET_USER_ID:
     print("Error: Variabel lingkungan belum diisi lengkap!")
     exit(1)
 
-from google import genai
-ai_client = genai.Client(api_key=API_KEY_GEMINI) if API_KEY_GEMINI else None
+if API_KEY_GEMINI:
+    google_genai.configure(api_key=API_KEY_GEMINI)
+    gemini_model = google_genai.GenerativeModel('gemini-1.5-flash')
+else:
+    gemini_model = None
 
 current_trigger_task = None
 quiz_channel_id = None
@@ -137,7 +141,7 @@ quiz_channel_id = None
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== ALL CHEAT CODES READY (MATH BY GEMINI, FLAGS/ANIMALS/LOGOS BY URL) ===')
+        print('=== SIKLUS AKTIF: MONITORING JAWABAN & TIMEOUT LIONNSEX ====')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id
@@ -145,6 +149,7 @@ class MySelfBot(discord.Client):
         if message.author.id == TARGET_USER_ID or message.content.strip() == "!c":
             quiz_channel_id = message.channel.id
 
+        # Interupsi timer jika ada soal baru atau orang lain sudah memicu !c duluan
         if current_trigger_task and not current_trigger_task.done():
             if message.content.strip() == "!c" or (message.author.id == TARGET_USER_ID and ("60 seconds" in message.content.lower() or message.embeds)):
                 current_trigger_task.cancel()
@@ -174,72 +179,67 @@ class MySelfBot(discord.Client):
             print(f"\n[LIVE DEBUG LIONNSEX] Teks Masuk:\n{full_text}\n-----------------------")
 
         # =========================================================
-        # ALUR A: MENJAWAB KUIS (DENGAN JEDA PENGAMAN DELAY SMART)
+        # ALUR A: MENJAWAB KUIS (DELAY AMAN 0.1s - 1.0s)
         # =========================================================
         if message.author.id == TARGET_USER_ID and ("60 seconds" in content_lower or "!char" in content_lower):
             final_answer = ""
             success = False
 
             if image_url:
-                # 1. Jalur Cheat URL Negara (Flags)
                 if "challenge/flags/flag_" in image_url:
                     match = re.search(r'flag_([^.]+)\.png', image_url)
                     if match:
                         final_answer = match.group(1).replace('_', ' ').title()
                         success = True
-                
-                # 2. Jalur Cheat URL Hewan (Animals)
                 elif "challenge/animals/animal_" in image_url:
                     match = re.search(r'animal_([^.]+)\.jpg', image_url)
                     if match:
                         final_answer = match.group(1).replace('_', ' ').title()
                         success = True
-                
-                # 3. BARU: Jalur Cheat URL Logo Brand (Logos)
                 elif "challenge/logos/logo_" in image_url:
                     match = re.search(r'(logo_\d+)\.png', image_url)
                     if match:
                         logo_key = match.group(1)
                         if logo_key in LOGO_MAP:
-                            # Ambil jawaban dan rapikan format kapitalnya (.title())
                             final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
                             success = True
-                            print(f"[CHEAT LOGO] Terdeteksi {logo_key} -> Jawab: {final_answer}")
 
-            # 4. Jalur Matematika (Tetap mengandalkan Gemini AI)
-            if not success and "math" in content_lower and ai_client:
+            if not success and "math" in content_lower and gemini_model:
                 try:
                     prompt = (
-                        f"Kamu adalah kalkulator kuis otomatis. Hitung atau selesaikan kuis matematika di bawah ini "
-                        f"dan HANYA berikan HASIL ANGKA NYA SAJA tanpa penjelasan, tanpa kalimat pengantar, "
-                        f"tanpa tanda titik di akhir, dan tanpa format Markdown.\n\nIsi Kuis:\n{full_text}\nJawaban bersih:"
+                        f"Kamu adalah kalkulator kuis otomatis. Selesaikan operasi aritmatika dari kuis berikut "
+                        f"dan HANYA berikan HASIL ANGKA AKHIRNYA SAJA tanpa teks pengantar, tanpa penjelasan, "
+                        f"tanpa tanda titik di akhir, dan jangan gunakan format Markdown.\n\nKuis:\n{full_text}"
                     )
-                    response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                    response = gemini_model.generate_content(prompt)
                     final_answer = response.text.strip()
                     if final_answer.endswith('.'): final_answer = final_answer[:-1]
                     if final_answer: success = True
-                except Exception as e:
-                    print(f"[ERROR GEMINI] {e}")
+                except: pass
 
-            # KIRIM JAWABAN DENGAN JEDA 0.1 - 1.0 DETIK (PENGAMAN 429)
             if final_answer and success:
                 try:
-                    answer_delay = random.uniform(0.1, 1.0)
-                    await asyncio.sleep(answer_delay)
-                    
+                    await asyncio.sleep(random.uniform(0.1, 1.0))
                     await message.channel.send(final_answer)
-                    print(f"[SPEED] Jawaban kuis '{final_answer}' terkirim setelah jeda {round(answer_delay, 2)}s.")
-                except Exception as e:
-                    print(f"[ERROR SEND] {e}")
+                except: pass
                 return
 
         # =========================================================
-        # ALUR B: PENGECEKAN LOOT & SMART TIMER
+        # ALUR B: REKAPAN HADIAH & PERSIAPAN SIKLUS SMART TIMER
         # =========================================================
-        if message.author.id == TARGET_USER_ID and ("got it first!" in content_lower or "reward:" in content_lower):
+        # Pemicu 1: Ada pengumuman pemenang (kategori normal)
+        is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower
+        
+        # Pemicu 2: BARU! Kuis hangus / timeout otomatis dari bot kuis
+        is_quiz_timeout = "time's up!" in content_lower or "nobody solved it" in content_lower
+
+        if message.author.id == TARGET_USER_ID and (is_quiz_ended or is_quiz_timeout):
             
-            if "msdn" in content_lower and "got it first!" in content_lower:
-                print("[🏆 DEBUG WINNER] Deteksi kemenangan msdn terpicu di script!")
+            if is_quiz_timeout:
+                print("[TIMEOUT] Kuis hangus karena tidak ada yang menjawab. Bersiap memicu Smart Timer...")
+
+            # Jika kuis selesai normal dan msdn pemenangnya, catat loot-nya
+            if is_quiz_ended and "msdn" in content_lower:
                 ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                 rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                 
@@ -256,8 +256,9 @@ class MySelfBot(discord.Client):
                     "reward": str_reward
                 })
                 save_loot_history(history)
-                print("[LOOT COMMITTED] Berhasil menyimpan data kemenangan msdn!")
+                print("[LOOT COMMITTED] Kemenangan msdn dicatat.")
 
+            # Jalankan Smart Timer (Aktif baik kuis selesai normal maupun hangus)
             if quiz_channel_id:
                 if current_trigger_task and not current_trigger_task.done():
                     current_trigger_task.cancel()
