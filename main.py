@@ -3,16 +3,33 @@ import asyncio
 import random
 import os
 import re
-from google import genai
+import json
 from flask import Flask, render_template_string
 from threading import Thread
 from datetime import datetime
 
 # =========================================================
-# 1. SETUP WEB SERVER MINI & REKAPAN HADIAH (HTML VIEW)
+# 1. SETUP WEB SERVER MINI & REKAPAN HADIAH (FILE BASED)
 # =========================================================
 app = Flask('')
-loot_history = []
+DB_FILE = "loot_history.json"
+
+def load_loot_history():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[ERROR DB] Gagal membaca file JSON: {e}")
+            return []
+    return []
+
+def save_loot_history(data):
+    try:
+        with open(DB_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"[ERROR DB] Gagal menulis ke file JSON: {e}")
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -55,7 +72,7 @@ HTML_TEMPLATE = """
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="3" class="no-data">Belum ada hadiah yang tercatat. Kuis sedang berjalan...</td>
+                        <td colspan="3" class="no-data">Belum ada hadiah yang tercatat untuk sesi ini. Silakan menangkan kuis terlebih dahulu!</td>
                     </tr>
                 {% endif %}
             </tbody>
@@ -67,7 +84,9 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def home():
-    return render_template_string(HTML_TEMPLATE, loots=loot_history)
+    # Selalu muat data terbaru dari file JSON saat halaman diakses
+    current_loots = load_loot_history()
+    return render_template_string(HTML_TEMPLATE, loots=current_loots)
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -86,7 +105,7 @@ if not TOKEN_DISCORD or not TARGET_USER_ID:
     print("Error: Variabel lingkungan belum diisi lengkap!")
     exit(1)
 
-# Inisialisasi API client Gemini jika API key tersedia
+from google import genai
 ai_client = genai.Client(api_key=API_KEY_GEMINI) if API_KEY_GEMINI else None
 
 current_trigger_task = None
@@ -95,7 +114,7 @@ quiz_channel_id = None
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('Mode Hybrid Aktif (Cheat URL + Gemini Math). Siap berburu.')
+        print('Mode Logger JSON File Aktif. Siap mencatat loot secara permanen per sesi.')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id
@@ -103,12 +122,11 @@ class MySelfBot(discord.Client):
         if message.author.id == TARGET_USER_ID or message.content.strip() == "!c":
             quiz_channel_id = message.channel.id
 
-        # Batalkan timer !c milik kita jika terdeteksi kuis baru atau ada orang lain mengetik !c duluan
         if current_trigger_task and not current_trigger_task.done():
             if message.content.strip() == "!c" or (message.author.id == TARGET_USER_ID and ("60 seconds" in message.content.lower() or message.embeds)):
                 current_trigger_task.cancel()
                 current_trigger_task = None
-                print("[SMART TIMER] Ada aktivitas kuis baru/!c dari user lain. Timer pemicu kita dibatalkan.")
+                print("[SMART TIMER] Ada aktivitas kuis baru/!c dari user lain. Timer kita dibatalkan.")
 
         if message.author.id == self.user.id:
             return
@@ -131,13 +149,12 @@ class MySelfBot(discord.Client):
         content_lower = full_text.lower()
 
         # =========================================================
-        # ALUR A: MENJAWAB KUIS - INSTAN TANPA DELAY ⚡
+        # ALUR A: MENJAWAB KUIS - INSTAN
         # =========================================================
         if message.author.id == TARGET_USER_ID and ("60 seconds" in content_lower or "!char" in content_lower):
             final_answer = ""
             success = False
 
-            # 1. Jalur Cheat URL (Negara & Hewan)
             if image_url:
                 if "challenge/flags/flag_" in image_url:
                     match = re.search(r'flag_([^.]+)\.png', image_url)
@@ -150,7 +167,6 @@ class MySelfBot(discord.Client):
                         final_answer = match.group(1).replace('_', ' ').title()
                         success = True
 
-            # 2. Kembalikan Jalur Math Challenge ke Gemini AI 🧠
             if not success and "math" in content_lower and ai_client:
                 print("[GEMINI PROCESS] Memproses Math Challenge via Gemini AI...")
                 try:
@@ -158,42 +174,31 @@ class MySelfBot(discord.Client):
                         f"Kamu adalah kalkulator kuis otomatis. Hitung atau selesaikan kuis matematika di bawah ini "
                         f"dan HANYA berikan HASIL ANGKA NYA SAJA tanpa penjelasan, tanpa kalimat pengantar, "
                         f"tanpa tanda titik di akhir, dan tanpa format Markdown.\n\n"
-                        f"Contoh Kuis: 17 + 7 = ?\nJawaban bersih: 24\n\n"
                         f"Isi Kuis:\n{full_text}\n"
                         f"Jawaban bersih:"
                     )
-
-                    response = ai_client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=prompt,
-                    )
-                    
+                    response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     final_answer = response.text.strip()
-                    if final_answer.endswith('.'):
-                        final_answer = final_answer[:-1]
-                    
-                    if final_answer:
-                        success = True
-                        print(f"[GEMINI PROCESS] Gemini berhasil menjawab: {final_answer}")
+                    if final_answer.endswith('.'): final_answer = final_answer[:-1]
+                    if final_answer: success = True
                 except Exception as e:
                     print(f"[ERROR GEMINI] Gagal memproses kuis mtk lewat Gemini: {e}")
 
-            # KIRIM INSTAN KE DISCORD
             if final_answer and success:
                 try:
                     await message.channel.send(final_answer)
                     print(f"[SPEED] Jawaban kuis dikirim instan: '{final_answer}'")
                 except Exception as e:
-                    print(f"[ERROR SEND] Gagal mengirim jawaban instan (Kemungkinan Rate Limited): {e}")
+                    print(f"[ERROR SEND] Gagal mengirim jawaban instan: {e}")
                 return
 
         # =========================================================
-        # ALUR B: REKAPAN HADIAH & SMART TIMER MAX 10 DETIK ⏱️
+        # ALUR B: REKAPAN HADIAH & PROSES SIMPAN KE FILE JSON 💾
         # =========================================================
         if message.author.id == TARGET_USER_ID and ("got it first!" in content_lower or "reward:" in content_lower):
             
             if "msdn got it first!" in content_lower:
-                print("[🏆 WINNER] Anda (msdn) menang!")
+                print("[🏆 WINNER] Anda (msdn) menang! Menyimpan ke database local...")
                 ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                 rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                 
@@ -203,32 +208,31 @@ class MySelfBot(discord.Client):
                 if "sent to your main" in str_reward.lower():
                     str_reward = str_reward.split("Sent to your")[0].strip()
 
-                loot_history.insert(0, {
+                # Baca data lama, selipkan data baru di paling atas, lalu simpan kembali
+                history = load_loot_history()
+                history.insert(0, {
                     "time": datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
                     "answer": str_answer,
                     "reward": str_reward
                 })
+                save_loot_history(history)
+                print(f"[LOOT COMMITTED] Hadiah aman tertulis di local file.")
 
             if quiz_channel_id:
                 if current_trigger_task and not current_trigger_task.done():
                     current_trigger_task.cancel()
-                
                 current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
 
     async def smart_trigger_sequence(self):
         global quiz_channel_id
         try:
-            # Jeda acak 6 - 10 detik agar aman dari slowmode 5s grup
             wait_time = random.uniform(6, 10)
-            print(f"[SMART TIMER] Mengatur waktu tunggu sepi: {round(wait_time, 2)} detik...")
             await asyncio.sleep(wait_time)
-            
             if quiz_channel_id:
                 target_channel = self.get_channel(quiz_channel_id)
                 if target_channel:
                     try:
                         await target_channel.send("!c")
-                        print("[SMART TIMER] Room sepi melebihi batas waktu! Mengirim !c...")
                     except Exception as e:
                         print(f"[ERROR TRIGGER] Gagal mengirim !c saat sepi: {e}")
         except asyncio.CancelledError:
