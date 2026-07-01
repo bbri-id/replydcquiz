@@ -137,26 +137,49 @@ else:
 
 current_trigger_task = None
 quiz_channel_id = None
+is_paused = False  # Status global kendali pause bot
 
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== SIKLUS AKTIF: MONITORING JAWABAN & TIMEOUT LIONNSEX ====')
+        print('=== REMOTE CONTROL AKTIF ("rame" -> PAUSE | "capek" -> START) ===')
 
     async def on_message(self, message):
-        global current_trigger_task, quiz_channel_id
+        global current_trigger_task, quiz_channel_id, is_paused
         
-        if message.author.id == TARGET_USER_ID or message.content.strip() == "!c":
+        # --- KENDALI KATA KUNCI REMOTE CONTROL (HANYA DARI AKUN ANDA SENDIRI) ---
+        if message.author.id == self.user.id:
+            msg_lower = message.content.lower()
+            if "rame" in msg_lower and not is_paused:
+                is_paused = True
+                print("[REMOTE CONTROL] Terdeteksi 'rame'. Bot memasuki mode PAUSE (Idle).")
+                # Jika ada schedule timer !c yang menggantung, langsung bersihkan
+                if current_trigger_task and not current_trigger_task.done():
+                    current_trigger_task.cancel()
+                    current_trigger_task = None
+            elif "capek" in msg_lower and is_paused:
+                is_paused = False
+                print("[REMOTE CONTROL] Terdeteksi 'capek'. Bot AKTIF kembali.")
+                # Picu kuis pertama setelah aktif kembali jika channel sudah terekam
+                if quiz_channel_id:
+                    if current_trigger_task and not current_trigger_task.done():
+                        current_trigger_task.cancel()
+                    current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
+            return
+
+        # Pastikan target chat hanya bersumber dari BOT TARGET (LionNSEX)
+        if message.author.id != TARGET_USER_ID:
+            return
+
+        # Rekam channel aktif
+        if message.content.strip() == "!c" or message.embeds:
             quiz_channel_id = message.channel.id
 
-        # Interupsi timer jika ada soal baru atau orang lain sudah memicu !c duluan
+        # Interupsi timer otomatis jika terdeteksi aktivitas kuis baru dari room
         if current_trigger_task and not current_trigger_task.done():
-            if message.content.strip() == "!c" or (message.author.id == TARGET_USER_ID and ("60 seconds" in message.content.lower() or message.embeds)):
+            if message.content.strip() == "!c" or "60 seconds" in message.content.lower() or message.embeds:
                 current_trigger_task.cancel()
                 current_trigger_task = None
-
-        if message.author.id == self.user.id:
-            return
 
         full_text = ""
         image_url = ""
@@ -175,13 +198,16 @@ class MySelfBot(discord.Client):
 
         content_lower = full_text.lower()
 
-        if message.author.id == TARGET_USER_ID:
-            print(f"\n[LIVE DEBUG LIONNSEX] Teks Masuk:\n{full_text}\n-----------------------")
+        print(f"\n[LIVE DEBUG LIONNSEX] Teks Masuk:\n{full_text}\n-----------------------")
 
         # =========================================================
-        # ALUR A: MENJAWAB KUIS (DELAY AMAN 0.1s - 1.0s)
+        # ALUR A: MENJAWAB KUIS (DIPROTES RELEVAN OLEH STATUS PAUSE)
         # =========================================================
-        if message.author.id == TARGET_USER_ID and ("60 seconds" in content_lower or "!char" in content_lower):
+        if "60 seconds" in content_lower or "!char" in content_lower:
+            if is_paused:
+                print("[PAUSED MODE] Ada kuis masuk, tapi bot diabaikan karena status sedang RAME.")
+                return
+
             final_answer = ""
             success = False
 
@@ -227,18 +253,12 @@ class MySelfBot(discord.Client):
         # =========================================================
         # ALUR B: REKAPAN HADIAH & PERSIAPAN SIKLUS SMART TIMER
         # =========================================================
-        # Pemicu 1: Ada pengumuman pemenang (kategori normal)
         is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower
-        
-        # Pemicu 2: BARU! Kuis hangus / timeout otomatis dari bot kuis
         is_quiz_timeout = "time's up!" in content_lower or "nobody solved it" in content_lower
 
-        if message.author.id == TARGET_USER_ID and (is_quiz_ended or is_quiz_timeout):
+        if is_quiz_ended or is_quiz_timeout:
             
-            if is_quiz_timeout:
-                print("[TIMEOUT] Kuis hangus karena tidak ada yang menjawab. Bersiap memicu Smart Timer...")
-
-            # Jika kuis selesai normal dan msdn pemenangnya, catat loot-nya
+            # Catat hadiah jika msdn menang (pencatatan tetap jalan meskipun dalam kondisi pause)
             if is_quiz_ended and "msdn" in content_lower:
                 ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                 rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
@@ -258,7 +278,12 @@ class MySelfBot(discord.Client):
                 save_loot_history(history)
                 print("[LOOT COMMITTED] Kemenangan msdn dicatat.")
 
-            # Jalankan Smart Timer (Aktif baik kuis selesai normal maupun hangus)
+            # KONDISI PAUSE JALUR TIMING: Jika status sedang RAME, hentikan looping !c di sini
+            if is_paused:
+                print("[PAUSED MODE] Kuis selesai. Pemicu otomatis !c ditiadakan.")
+                return
+
+            # Jalankan Smart Timer otomatis jika bot aktif (is_paused == False)
             if quiz_channel_id:
                 if current_trigger_task and not current_trigger_task.done():
                     current_trigger_task.cancel()
