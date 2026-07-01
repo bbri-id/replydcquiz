@@ -2,12 +2,13 @@ import discord
 import asyncio
 import random
 import os
+import re
 from google import genai
 from flask import Flask
 from threading import Thread
 
 # =========================================================
-# 1. SETUP WEB SERVER MINI (Agar Render Free Tier Tetap Hidup)
+# 1. SETUP WEB SERVER MINI
 # =========================================================
 app = Flask('')
 
@@ -37,20 +38,19 @@ ai_client = genai.Client(api_key=API_KEY_GEMINI)
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('Menunggu Quiz Embed dari Bot LionNSEX...')
+        print('Menunggu Quiz Embed dari Bot LionNSEX dengan Fitur Cheat Code Kapital...')
 
     async def on_message(self, message):
-        # Abaikan jika pesan berasal dari diri sendiri
         if message.author.id == self.user.id:
             return
 
-        # Pastikan hanya merespon BOT TARGET (LionNSEX)
         if message.author.id != TARGET_USER_ID:
             return
 
         full_text = ""
+        image_url = ""
 
-        # 1. Ekstrak teks dari kotak Embed Quiz
+        # 1. Ekstrak teks dan URL Gambar dari Embed Quiz
         if message.embeds:
             for embed in message.embeds:
                 if embed.title:
@@ -62,29 +62,62 @@ class MySelfBot(discord.Client):
                         full_text += f"{field.name}: {field.value}\n"
                 if embed.footer and embed.footer.text:
                     full_text += embed.footer.text + "\n"
+                
+                # Cek apakah ada gambar di dalam embed
+                if embed.image and embed.image.url:
+                    image_url = embed.image.url
 
-        # 2. Gabungkan dengan teks biasa jika ada
         if message.content:
             full_text += "\n" + message.content
 
         content_lower = full_text.lower()
         
-        # Filter pemicu kuis: Mengandung "60 seconds" atau "!char"
+        # Pemicu kuis aktif
         if "60 seconds" in content_lower or "!char" in content_lower:
             print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
             
-            async with message.channel.typing():
+            final_answer = ""
+            used_cheat = False
+
+            # =========================================================
+            # STRATEGI 1: JALUR CHEAT CODE (NEGARA & HEWAN VIA URL)
+            # =========================================================
+            if image_url:
+                print(f"[LOG RENDER] Menemukan URL Gambar: {image_url}")
+                
+                # A. Deteksi Kuis Negara (Flags)
+                if "challenge/flags/flag_" in image_url:
+                    match = re.search(r'flag_([^.]+)\.png', image_url)
+                    if match:
+                        raw_answer = match.group(1)
+                        # Ganti _ jadi spasi & kapital di awal kata (contoh: Sierra Leone)
+                        final_answer = raw_answer.replace('_', ' ').title()
+                        used_cheat = True
+                        print(f"[CHEAT CODE] Berhasil mengekstrak kuis Negara: {final_answer}")
+
+                # B. Deteksi Kuis Hewan (Animals)
+                elif "challenge/animals/animal_" in image_url:
+                    match = re.search(r'animal_([^.]+)\.jpg', image_url)
+                    if match:
+                        raw_answer = match.group(1)
+                        # Ganti _ jadi spasi & KAPITAL DI AWAL KATA (contoh: Hyena / Guppy)
+                        final_answer = raw_answer.replace('_', ' ').title()
+                        used_cheat = True
+                        print(f"[CHEAT CODE] Berhasil mengekstrak kuis Hewan: {final_answer}")
+
+            # =========================================================
+            # STRATEGI 2: JALUR GEMINI AI (MATH CHALLENGE / LOGO / TEXT)
+            # =========================================================
+            if not used_cheat:
+                print("[LOG RENDER] Tidak ada cheat URL yang cocok. Menggunakan Gemini AI...")
                 try:
-                    # PROMPT SUPER KETAT: Memaksa Gemini hanya mengeluarkan jawaban murni
                     prompt = (
                         f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
                         f"dan HANYA memberikan satu atau dua kata jawaban intinya saja tanpa embel-embel, tanpa penjelasan, "
-                        f"tanpa tanda baca titik, tanpa kalimat pengantar, dan tanpa Markdown (jangan gunakan bold/italic).\n\n"
+                        f"tanpa tanda baca titik, tanpa kalimat pengantar, dan tanpa Markdown. Pastikan gunakan huruf kapital di awal setiap kata jawaban.\n\n"
                         f"Aturan Khusus:\n"
                         f"- Jika kuis matematika (Math Challenge), berikan HASIL ANGKA NYA SAJA (contoh: 24).\n"
-                        f"- Jika kuis tebak logo/brand (Guess the Logo), sebutkan NAMA BRAND NYA SAJA (contoh: Chanel).\n"
-                        f"- Jika kuis tebak negara/bendera (Guess the Country), sebutkan NAMA NEGARANYA SAJA (contoh: Switzerland).\n"
-                        f"- Jika kuis tebak hewan (Guess the Animal), sebutkan NAMA HEWANNYA SAJA (contoh: Guppy).\n\n"
+                        f"- Jika kuis tebak logo/brand (Guess the Logo), sebutkan NAMA BRAND NYA SAJA dengan kapital diawal (contoh: Chanel).\n\n"
                         f"Isi Kuis:\n{full_text}\n"
                         f"Jawaban bersih:"
                     )
@@ -94,24 +127,25 @@ class MySelfBot(discord.Client):
                         contents=prompt,
                     )
                     
-                    # Bersihkan spasi atau karakter newline yang tidak diinginkan
-                    jawaban_ai = response.text.strip()
-                    
-                    # Pengaman tambahan: Jika AI tidak sengaja memberikan titik di akhir, kita hapus
-                    if jawaban_ai.endswith('.'):
-                        jawaban_ai = jawaban_ai[:-1]
-                    
-                    # Jeda acak natural sebelum mengirim (2-4 detik)
-                    await asyncio.sleep(random.uniform(2, 4))
-                    
-                    # KIRIM JAWABAN MURNI (Bukan Reply, langsung teks biasa agar match-case sistem bot)
-                    await message.channel.send(jawaban_ai)
-                    print(f"[LOG RENDER] Berhasil menjawab kuis dengan teks: '{jawaban_ai}'")
+                    final_answer = response.text.strip()
+                    if final_answer.endswith('.'):
+                        final_answer = final_answer[:-1]
 
                 except Exception as e:
-                    # PENTING: Jika error, pooling/tampilkan HANYA di log Render. Jangan kirim ke Discord!
-                    print(f"[ERROR LOG RENDER] Gagal memproses kuis atau API bermasalah: {e}")
+                    print(f"[ERROR LOG RENDER] Gagal memproses kuis via Gemini: {e}")
+                    return
 
-# Inisialisasi tanpa parameter intents eksternal (mengatasi AttributeError sebelumnya)
+            # =========================================================
+            # PROSES PENGIRIMAN JAWABAN (STERIL)
+            # =========================================================
+            if final_answer:
+                # Jeda acak natural agar tidak dianggap bot spam ilegal oleh Discord
+                await asyncio.sleep(random.uniform(2, 4))
+                
+                # Kirim hanya jawaban bersih ke channel kuis
+                await message.channel.send(final_answer)
+                print(f"[LOG RENDER] Berhasil mengirim jawaban ke Discord: '{final_answer}'")
+
+# Jalankan bot
 client = MySelfBot()
 client.run(TOKEN_DISCORD)
