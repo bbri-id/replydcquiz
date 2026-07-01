@@ -90,7 +90,7 @@ quiz_channel_id = None
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('Mode Kecepatan Penuh Aktif. Jawaban Instan & Pemicu !c Max 10 Detik.')
+        print('Mode Kecepatan Penuh Steril Aktif. Siap memburu kuis.')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id
@@ -103,7 +103,7 @@ class MySelfBot(discord.Client):
             if message.content.strip() == "!c" or (message.author.id == TARGET_USER_ID and ("60 seconds" in message.content.lower() or message.embeds)):
                 current_trigger_task.cancel()
                 current_trigger_task = None
-                print("[SMART TIMER] Ada aktivitas kuis baru/!c dari user lain. Timer kita dibatalkan.")
+                print("[SMART TIMER] Ada aktivitas kuis baru/!c dari user lain. Timer pemicu kita dibatalkan.")
 
         if message.author.id == self.user.id:
             return
@@ -124,10 +124,9 @@ class MySelfBot(discord.Client):
             full_text += "\n" + message.content
 
         content_lower = full_text.lower()
-        quiz_channel_id = message.channel.id
 
         # =========================================================
-        # ALUR A: MENJAWAT KUIS - INSTAN TANPA DELAY ⚡
+        # ALUR A: MENJAWAB KUIS - INSTAN TANPA DELAY ⚡
         # =========================================================
         if message.author.id == TARGET_USER_ID and ("60 seconds" in content_lower or "!char" in content_lower):
             final_answer = ""
@@ -146,22 +145,29 @@ class MySelfBot(discord.Client):
                         final_answer = match.group(1).replace('_', ' ').title()
                         success = True
 
-            # 2. Jalur Matematika Lokal
+            # 2. Jalur Matematika Lokal (PERBAIKAN TYPO OPERATOR PENGURANGAN)
             if not success and "math challenge" in content_lower:
                 math_match = re.search(r'(\d+)\s*([\+\-\*\/])\s*(\d+)', full_text)
                 if math_match:
-                    angka1, operator, angka2 = int(math_match.group(1)), math_match.group(2), int(math_match.group(3))
+                    angka1 = int(math_match.group(1))
+                    operator = math_match.group(2)
+                    angka2 = int(math_match.group(3))
+                    
                     if operator == '+': hasil = angka1 + angka2
-                    elif operator == '-': hasil = angka1 - arithmetic_operator
+                    elif operator == '-': hasil = angka1 - angka2 # DIBAIKI DI SINI
                     elif operator == '*': hasil = angka1 * angka2
                     elif operator == '/': hasil = angka1 // angka2
+                    
                     final_answer = str(hasil)
                     success = True
 
-            # KIRIM INSTAN TANPA ASYNCIO.SLEEP
+            # KIRIM INSTAN
             if final_answer and success:
-                await message.channel.send(final_answer)
-                print(f"[SPEED] Jawaban kuis dikirim instan: '{final_answer}'")
+                try:
+                    await message.channel.send(final_answer)
+                    print(f"[SPEED] Jawaban kuis dikirim instan: '{final_answer}'")
+                except Exception as e:
+                    print(f"[ERROR SEND] Gagal mengirim jawaban secara instan: {e}")
                 return
 
         # =========================================================
@@ -192,11 +198,10 @@ class MySelfBot(discord.Client):
                 
                 current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
 
-    # Fungsi khusus pemicu sepi kuis (Range diubah ke 6 - 10 Detik)
     async def smart_trigger_sequence(self):
         global quiz_channel_id
         try:
-            # Jeda acak minimal 6 detik (lolos slowmode) dan maksimal 10 detik
+            # Mengunci range tunggu aman di 6 - 10 detik
             wait_time = random.uniform(6, 10)
             print(f"[SMART TIMER] Mengatur waktu tunggu sepi: {round(wait_time, 2)} detik...")
             await asyncio.sleep(wait_time)
@@ -204,8 +209,11 @@ class MySelfBot(discord.Client):
             if quiz_channel_id:
                 target_channel = self.get_channel(quiz_channel_id)
                 if target_channel:
-                    await target_channel.send("!c")
-                    print("[SMART TIMER] Room sepi melebihi batas waktu! Mengirim !c...")
+                    try:
+                        await target_channel.send("!c")
+                        print("[SMART TIMER] Room sepi melebihi batas waktu! Mengirim !c...")
+                    except Exception as e:
+                        print(f"[ERROR TRIGGER] Gagal mengirim !c saat sepi: {e}")
         except asyncio.CancelledError:
             pass
 
