@@ -138,7 +138,7 @@ is_paused = False
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== SIKLUS AKTIF: OPTIMASI PROMPT MATH KURUNG & PERKALIAN ===')
+        print('=== SIKLUS AKTIF: FIX MATH RUMIT & KUADRAT SAKTI ===')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id, is_paused
@@ -221,20 +221,25 @@ class MySelfBot(discord.Client):
                             final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
                             success = True
 
-            # 2. Jalur Gemini (DENGAN PENYEMPURNAAN PROMPT OPERASI MATEMATIKA BERGANDA)
+            # 2. Jalur Gemini (DENGAN RE-FORMAT KUADRAT OTOMATIS & PROMPT SUPER AMAN)
             if not success:
                 try:
+                    # AMAN: Ganti karakter pangkat '²' menjadi teks '^2' agar Gemini 100% paham itu kuadrat
+                    cleaned_math_text = full_text.replace('²', '^2')
+
                     prompt = (
                         f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
                         f"dan HANYA memberikan jawaban bersih intinya saja tanpa embel-embel, tanpa penjelasan, "
                         f"tanpa tanda baca titik, tanpa kalimat pengantar, dan tanpa format Markdown.\n\n"
                         f"Aturan Khusus Matematika (Math Challenge):\n"
                         f"- Selesaikan perhitungan aritmatika dengan benar sesuai prioritas matematika.\n"
+                        f"- Tanda '^2' artinya kuadrat atau pangkat dua (contoh: 12^2 artinya 12 dikali 12).\n"
                         f"- Huruf 'x' atau 'X' berarti perkalian (*).\n"
-                        f"- Jika ada tanda kurung seperti (A + B) x C, hitung isi kurung terlebih dahulu baru dikalikan.\n"
+                        f"- Jika ada tanda kurung, hitung isi kurung terlebih dahulu.\n"
                         f"- Berikan HANYA HASIL ANGKA NYA SAJA.\n"
-                        f"Contoh Kuis: (5 + 5) x 2 = ?\nJawaban bersih: 20\n\n"
-                        f"Isi Kuis:\n{full_text}\n"
+                        f"Contoh Kuis 1: 12^2 = ?\nJawaban bersih: 144\n"
+                        f"Contoh Kuis 2: (5 + 5) x 2 = ?\nJawaban bersih: 20\n\n"
+                        f"Isi Kuis:\n{cleaned_math_text}\n"
                         f"Jawaban bersih:"
                     )
 
