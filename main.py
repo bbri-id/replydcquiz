@@ -138,13 +138,11 @@ is_paused = False
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== ENGINE ANTI-CRASH & ANTI-TIMEOUT DISCORD LIVE ===')
+        print('=== SIKLUS AKTIF: FIX SIMBOL × PERKALIAN ASLI UNICODE ===')
 
-    # FIX DETEKSI TIMEOUT: Memantau pesan LionNSEX jika diedit menjadi Time's up!
     async def on_message_edit(self, before, after):
         global current_trigger_task, quiz_channel_id, is_paused
-        if after.author.id != TARGET_USER_ID:
-            return
+        if after.author.id != TARGET_USER_ID: return
             
         text_lower = (after.content or "") + "\n"
         if after.embeds:
@@ -153,9 +151,8 @@ class MySelfBot(discord.Client):
                 if embed.title: text_lower += embed.title.lower() + "\n"
 
         if "time's up!" in text_lower or "nobody solved it" in text_lower:
-            print("[TIMEOUT DETECTED via EDIT] Kuis dikonfirmasi hangus. Memulai Smart Timer...")
-            if is_paused:
-                return
+            print("[TIMEOUT DETECTED] Kuis hangus. Memulai Smart Timer...")
+            if is_paused: return
             if quiz_channel_id:
                 if current_trigger_task and not current_trigger_task.done():
                     current_trigger_task.cancel()
@@ -182,8 +179,7 @@ class MySelfBot(discord.Client):
                     current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
             return
 
-        if message.author.id != TARGET_USER_ID:
-            return
+        if message.author.id != TARGET_USER_ID: return
 
         if message.content.strip() == "!c" or message.embeds:
             quiz_channel_id = message.channel.id
@@ -214,38 +210,38 @@ class MySelfBot(discord.Client):
         # ALUR A: MENJAWAB KUIS
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
-            if is_paused:
-                print("[PAUSED MODE] Kuis diabaikan karena status sedang RAME.")
-                return
+            if is_paused: return
 
             print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
             final_answer = ""
             success = False
 
-            # 1. FIX MATH CHALLENGE UTAMA: Menggunakan Sistem Hitung Lokal (Regex + Eval)
-            # Sangat andal menangkap tipe perkalian 'x', tanda kurung '()', dan kuadrat '^2' / '²'
+            # 1. LOGIKA UTAMA FIX MATEMATIKA: Mengganti Karakter × khusus milik LionNSEX
             if "math" in content_lower:
                 try:
-                    # Normalisasi string matematika agar bisa dihitung Python
-                    math_expr = full_text.replace('²', '**2').replace('²', '^2')
-                    math_expr = math_expr.replace('x', '*').replace('X', '*')
+                    lines = [l.strip() for l in full_text.split('\n') if l.strip()]
+                    math_line = ""
+                    for line in lines:
+                        if '=' in line and '?' in line:
+                            math_line = line
+                            break
                     
-                    # Ambil baris yang memiliki pola hitungan aritmatika dasar
-                    match_math = re.search(r'([\d\s\+\-\*\/\(\)\*\*]+)\s*=\s*\?', math_expr)
-                    if match_math:
-                        expr_clean = match_math.group(1).strip()
-                        # Bersihkan tanda ^2 jika ada menjadi format pangkat python **2
-                        expr_clean = expr_clean.replace('^2', '**2')
+                    if math_line:
+                        expr = math_line.split('=')[0].strip()
                         
-                        # Hitung secara instan dan aman di skrip lokal
+                        # FIX UTAMA: Ganti karakter × (perkalian unicode khusus) beserta x biasa menjadi *
+                        expr_clean = expr.replace('×', '*').replace('x', '*').replace('X', '*')
+                        expr_clean = expr_clean.replace('²', '**2').replace('^2', '**2')
+                        
+                        # Hitung lokal dengan prioritas aritmatika yang tepat (Kabataku)
                         hasil_lokal = eval(expr_clean)
                         final_answer = str(int(hasil_lokal))
                         success = True
-                        print(f"[LOCAL MATH SUCCESS] Berhasil menghitung otomatis secara lokal: {final_answer}")
+                        print(f"[LOCAL MATH FIX] Berhasil hitung {expr} -> {final_answer}")
                 except Exception as math_err:
-                    print(f"[LOCAL MATH ERROR] Gagal menghitung aritmatika secara lokal, mengoper ke Gemini: {math_err}")
+                    print(f"[LOCAL MATH ERROR] Gagal hitung lokal: {math_err}")
 
-            # 2. Jalur Cheat URL Gambar (Flags, Animals, Logos)
+            # 2. Jalur Cheat URL Gambar
             if not success and image_url:
                 if "challenge/flags/flag_" in image_url:
                     match = re.search(r'flag_([^.]+)\.png', image_url)
@@ -265,10 +261,10 @@ class MySelfBot(discord.Client):
                             final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
                             success = True
 
-            # 3. Jalur Cadangan Gemini AI (Jika hitungan lokal / URL tidak membuahkan hasil)
+            # 3. Jalur Cadangan Gemini AI
             if not success:
                 try:
-                    cleaned_math_text = full_text.replace('²', '^2')
+                    cleaned_math_text = full_text.replace('×', '*').replace('²', '^2')
                     prompt = (
                         f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
                         f"dan HANYA memberikan jawaban bersih intinya saja tanpa embel-embel.\n\n"
@@ -279,20 +275,20 @@ class MySelfBot(discord.Client):
                         final_answer = response.text.strip().replace('.', '')
                         if final_answer: success = True
                 except Exception as e:
-                    print(f"[ERROR GEMINI] Gagal memproses cadangan Gemini: {e}")
+                    print(f"[ERROR GEMINI] {e}")
 
-            # Eksekusi pengiriman cepat (0.1 - 1.0s jeda)
+            # Eksekusi kirim ke Discord
             if final_answer and success:
                 try:
                     await asyncio.sleep(random.uniform(0.1, 1.0))
                     await message.channel.send(final_answer)
-                    print(f"[SPEED] Jawaban dikirim ke Discord: '{final_answer}'")
+                    print(f"[SPEED] Jawaban sukses terkirim: '{final_answer}'")
                 except Exception as send_err:
                     print(f"[ERROR SEND] {send_err}")
                 return
 
         # =========================================================
-        # ALUR B: REKAPAN HADIAH & BERSILANG PADA MESSAGE BARU
+        # ALUR B: REKAPAN HADIAH & SIKLUS SMART TIMER
         # =========================================================
         is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower
         is_quiz_timeout = "time's up!" in content_lower or "nobody solved it" in content_lower
@@ -311,8 +307,7 @@ class MySelfBot(discord.Client):
                 history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
                 save_loot_history(history)
 
-            if is_paused:
-                return
+            if is_paused: return
 
             if quiz_channel_id:
                 if current_trigger_task and not current_trigger_task.done():
