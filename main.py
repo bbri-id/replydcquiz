@@ -131,21 +131,19 @@ if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID:
 
 ai_client = genai.Client(api_key=API_KEY_GEMINI)
 
-current_trigger_task = None
 quiz_channel_id = None
 is_paused = False  
+last_activity_time = datetime.utcnow()  # Rekam jejak waktu aktivitas kuis terakhir
 
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== ALUR BARU SELESAI SOAL -> PASTI TUNGGU 60 DETIK LALU !c ===')
-
-    async def on_message_edit(self, before, after):
-        # Kita nonaktifkan pelacakan timeout via edit karena alur baru sudah pasti dipicu 60 detik dari awal soal keluar
-        return
+        print('=== DUAL INTERVAL ENGINE: INSTAN RE-TRIGGER + 30S GUARD LOOP ===')
+        # Jalankan background loop checker
+        self.loop.create_task(self.background_30s_loop())
 
     async def on_message(self, message):
-        global current_trigger_task, quiz_channel_id, is_paused
+        global quiz_channel_id, is_paused, last_activity_time
         
         # --- SAKLAR REMOTE CONTROL ---
         if message.author.id == self.user.id:
@@ -153,16 +151,10 @@ class MySelfBot(discord.Client):
             if "rame" in msg_lower and not is_paused:
                 is_paused = True
                 print("[REMOTE CONTROL] Terdeteksi 'rame'. Bot memasuki mode PAUSE.")
-                if current_trigger_task and not current_trigger_task.done():
-                    current_trigger_task.cancel()
-                    current_trigger_task = None
             elif "capek" in msg_lower and is_paused:
                 is_paused = False
                 print("[REMOTE CONTROL] Terdeteksi 'capek'. Bot AKTIF kembali.")
-                if quiz_channel_id:
-                    if current_trigger_task and not current_trigger_task.done():
-                        current_trigger_task.cancel()
-                    current_trigger_task = asyncio.create_task(self.smart_trigger_sequence(0.5))
+                last_activity_time = datetime.utcnow()  # Reset timer biar langsung siap memantau
             return
 
         if message.author.id != TARGET_USER_ID: return
@@ -188,24 +180,17 @@ class MySelfBot(discord.Client):
         content_lower = full_text.lower()
 
         # =========================================================
-        # ALUR A: MENJAWAB KUIS & PASANG TIMER 60 DETIK
+        # KONDISI DAN 1: SOAL BARU MUNCUL (JAWAB KUIS)
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
+            last_activity_time = datetime.utcnow()  # Perbarui status ada aktivitas kuis aktif
             if is_paused: return
 
             print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
-            
-            # 🛑 UBAH ALUR UTAMA: Begitu soal keluar, batalkan task lama & langsung jadwalkan !c dalam 60 detik ke depan
-            if quiz_channel_id:
-                if current_trigger_task and not current_trigger_task.done():
-                    current_trigger_task.cancel()
-                current_trigger_task = asyncio.create_task(self.smart_trigger_sequence(60.0))
-                print("[TIMER LOCK] Soal keluar, mengunci waktu tunggu 60 detik sebelum !c berikutnya...")
-
             final_answer = ""
             success = False
 
-            # 1. Logika Matematika Baris ##
+            # Logika Matematika Baris ##
             if "math" in content_lower:
                 try:
                     lines = [l.strip() for l in full_text.split('\n') if l.strip()]
@@ -225,11 +210,11 @@ class MySelfBot(discord.Client):
                             hasil_lokal = eval(expr_purified)
                             final_answer = str(int(round(hasil_lokal)))
                             success = True
-                            print(f"[MATH SUCCESS] Hasil hitung lokal: '{expr_purified}' -> {final_answer}")
+                            print(f"[MATH LOCAL] Hasil hitung: {final_answer}")
                 except Exception as math_err:
-                    print(f"[MATH ERROR] Hitung lokal gagal, dialihkan ke Gemini: {math_err}")
+                    print(f"[MATH LOCAL ERROR] Dialihkan ke Gemini: {math_err}")
 
-            # 2. Jalur Cheat URL Gambar
+            # Jalur Cheat URL Gambar
             if not success and image_url:
                 try:
                     if "challenge/flags/flag_" in image_url:
@@ -251,14 +236,13 @@ class MySelfBot(discord.Client):
                                 success = True
                 except: pass
 
-            # 3. Jalur Cadangan Gemini AI
+            # Jalur Cadangan Gemini
             if not success:
                 try:
                     cleaned_math_text = full_text.replace('×', '*').replace('²', '^2')
                     prompt = (
                         f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
-                        f"dan HANYA memberikan jawaban bersih intinya saja tanpa embel-embel.\n\n"
-                        f"Isi Kuis:\n{cleaned_math_text}\nJawaban bersih:"
+                        f"dan HANYA memberikan jawaban bersih intinya saja.\n\nKuis:\n{cleaned_math_text}"
                     )
                     response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     if response and response.text:
@@ -266,52 +250,78 @@ class MySelfBot(discord.Client):
                         if final_answer: success = True
                 except: pass
 
-            # Eksekusi kirim jawaban ke Discord (Jeda aman)
+            # Kirim jawaban
             if final_answer and success:
                 try:
                     await asyncio.sleep(random.uniform(0.1, 1.0))
                     await message.channel.send(final_answer)
-                    print(f"[SPEED] Jawaban sukses terkirim: '{final_answer}'")
-                except Exception as send_err:
-                    print(f"[ERROR SEND] {send_err}")
+                except: pass
                 return
 
         # =========================================================
-        # ALUR B: REKAPAN HADIAH (Siklus Timer dipindahkan ke atas)
+        # KONDISI DAN 2: KUIS SELESAI / CHALLENGE SOLVED -> INSTAN TRIGGER !c
         # =========================================================
-        is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower
+        is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower or "challenge solved" in content_lower or "time's up!" in content_lower
 
-        if is_quiz_ended and "msdn" in content_lower:
-            try:
-                ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
-                str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
-                if "sent to your main" in str_reward.lower():
-                    str_reward = str_reward.split("Sent to your")[0].strip()
-
-                wib_time = datetime.utcnow() + timedelta(hours=7)
-                history = load_loot_history()
-                history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
-                save_loot_history(history)
-            except: pass
-
-    async def smart_trigger_sequence(self, seconds_to_wait):
-        global quiz_channel_id, is_paused
-        try:
-            # Menunggu sesuai durasi yang di-passing (60 detik)
-            await asyncio.sleep(seconds_to_wait)
-            if is_paused: return
+        if is_quiz_ended:
+            last_activity_time = datetime.utcnow()  # Perbarui waktu karena siklus kuis selesai
+            print("[FAST TRACK] Kuis selesai diproses. Memicu instan !c...")
             
+            # Catat hadiah jika msdn yang menang
+            if "msdn" in content_lower:
+                try:
+                    ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                    rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                    str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
+                    str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
+                    if "sent to your main" in str_reward.lower():
+                        str_reward = str_reward.split("Sent to your")[0].strip()
+
+                    wib_time = datetime.utcnow() + timedelta(hours=7)
+                    history = load_loot_history()
+                    history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
+                    save_loot_history(history)
+                except: pass
+
+            if is_paused: return
+
+            # Tembak !c instan dengan jeda natural 6-10 detik agar tidak terkena spam block
             if quiz_channel_id:
+                await asyncio.sleep(random.uniform(6.0, 10.0))
                 target_channel = self.get_channel(quiz_channel_id)
                 if target_channel:
                     try: 
                         await target_channel.send("!c")
-                        print(f"[TIMER DONE] Batas 60 detik selesai. Mengirim !c kembali.")
+                        print("[FAST TRACK SUCCESS] Berhasil mengirim !c instan.")
                     except: pass
-        except asyncio.CancelledError:
-            pass
+
+    # =========================================================
+    # BACKGROUND WORKER LOOP: CEK TIAP 30 DETIK JIKA ROOM SEPI (>60 DETIK)
+    # =========================================================
+    async def background_30s_loop(self):
+        global quiz_channel_id, is_paused, last_activity_time
+        await self.wait_until_ready()
+        
+        while not self.is_closed():
+            await asyncio.sleep(30)  # Loop berjalan konsisten setiap 30 detik
+            
+            if is_paused:
+                continue
+
+            # Hitung selisih waktu dari aktivitas kuis terakhir
+            time_silent = (datetime.utcnow() - last_activity_time).total_seconds()
+            
+            # JIKA RUANGAN SEPI LEBIH DARI 60 DETIK, TEMBAK !c OTOMATIS
+            if time_silent >= 60.0 and quiz_channel_id:
+                print(f"[BACKGROUND GUARD] Ruangan dideteksi sepi selama {int(time_silent)} detik. Memicu !c berkala...")
+                target_channel = self.get_channel(quiz_channel_id)
+                if target_channel:
+                    try:
+                        await target_channel.send("!c")
+                        # Perbarui waktu agar tidak membombardir berulang kali di detik yang sama
+                        last_activity_time = datetime.utcnow()
+                    except Exception as e:
+                        print(f"[BACKGROUND GUARD ERROR] Gagal mengirim !c: {e}")
 
 client = MySelfBot()
 client.run(TOKEN_DISCORD)
