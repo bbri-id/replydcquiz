@@ -125,14 +125,12 @@ TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
 API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
 TARGET_USER_ID = int(os.getenv('TARGET_USER_ID')) if os.getenv('TARGET_USER_ID') else None
 
-if not TOKEN_DISCORD or not TARGET_USER_ID:
+if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID:
     print("Error: Variabel lingkungan belum diisi lengkap!")
     exit(1)
 
-if API_KEY_GEMINI:
-    ai_client = genai.Client(api_key=API_KEY_GEMINI)
-else:
-    ai_client = None
+# Menggunakan Client murni dari berkas lama Anda yang terbukti lancar jaya
+ai_client = genai.Client(api_key=API_KEY_GEMINI)
 
 current_trigger_task = None
 quiz_channel_id = None
@@ -141,7 +139,7 @@ is_paused = False
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== SIKLUS FIX GEMINI & LOGGER GMT+7 WIB BERJALAN ===')
+        print('=== SIKLUS AKTIF: INTEGRASI UTAMA MATH MANDIRI & CHEAT URL ===')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id, is_paused
@@ -192,19 +190,19 @@ class MySelfBot(discord.Client):
 
         content_lower = full_text.lower()
 
-        print(f"\n[LIVE DEBUG LIONNSEX] Teks Masuk:\n{full_text}\n-----------------------")
-
         # =========================================================
-        # ALUR A: MENJAWAB KUIS
+        # ALUR A: MENJAWAB KUIS (DENGAN STRATEGI TERPADU SCRIPT AWAL)
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
             if is_paused:
                 print("[PAUSED MODE] Kuis diabaikan karena status sedang RAME.")
                 return
 
+            print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
             final_answer = ""
             success = False
 
+            # 1. Cek Jalur Cheat URL Terlebih Dahulu (Hemat Kuota & Cepat)
             if image_url:
                 if "challenge/flags/flag_" in image_url:
                     match = re.search(r'flag_([^.]+)\.png', image_url)
@@ -224,38 +222,44 @@ class MySelfBot(discord.Client):
                             final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
                             success = True
 
-            # PERBAIKAN TOTAL SINTAKS GOOGLE-GENAI UNTUK MATH CHALLENGE
-            if not success and "math" in content_lower and ai_client:
-                print("[GEMINI PROCESS] Mengirim kuis mtk ke Gemini AI Studio...")
+            # 2. Jika Bukan Kuis Gambar, Lempar ke Rumus Super Ketat Gemini Bawaan Awal Anda
+            if not success:
                 try:
                     prompt = (
-                        f"Kamu adalah kalkulator kuis otomatis. Selesaikan operasi aritmatika dari kuis berikut "
-                        f"dan HANYA berikan HASIL ANGKA AKHIRNYA SAJA tanpa teks pengantar, tanpa penjelasan, "
-                        f"tanpa tanda titik di akhir, dan jangan gunakan format Markdown.\n\nKuis:\n{full_text}"
+                        f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
+                        f"and HANYA memberikan satu atau dua kata jawaban intinya saja tanpa embel-embel, tanpa penjelasan, "
+                        f"tanpa tanda baca titik, tanpa kalimat pengantar, dan tanpa Markdown.\n\n"
+                        f"Aturan Khusus:\n"
+                        f"- Jika kuis matematika (Math Challenge), berikan HASIL ANGKA NYA SAJA (contoh: 24).\n"
+                        f"- Jika kuis tebak logo/brand (Guess the Logo), sebutkan NAMA BRAND NYA SAJA (contoh: Chanel).\n"
+                        f"- Jika kuis tebak negara/bendera (Guess the Country), sebutkan NAMA NEGARANYA SAJA (contoh: Switzerland).\n"
+                        f"- Jika kuis tebak hewan (Guess the Animal), sebutkan NAMA HEWANNYA SAJA (contoh: Guppy).\n\n"
+                        f"Isi Kuis:\n{full_text}\n"
+                        f"Jawaban bersih:"
                     )
-                    # Memakai pemanggilan model genai yang tepat
+
                     response = ai_client.models.generate_content(
                         model='gemini-2.5-flash',
-                        contents=prompt
+                        contents=prompt,
                     )
-                    # Cara ekstrak teks yang benar pada library google-genai
+                    
                     if response and response.text:
                         final_answer = response.text.strip()
-                        if final_answer.endswith('.'): 
+                        if final_answer.endswith('.'):
                             final_answer = final_answer[:-1]
-                        if final_answer: 
+                        if final_answer:
                             success = True
-                            print(f"[GEMINI SUCCESS] Hasil ekstraksi Gemini: '{final_answer}'")
-                except Exception as gemini_err: 
-                    print(f"[ERROR GEMINI SDK] Gagal memproses AI: {gemini_err}")
+                except Exception as e:
+                    print(f"[ERROR GEMINI] Gagal memproses kuis matematika/teks: {e}")
 
+            # Eksekusi Pengiriman Pesan Ke Discord dengan Jeda Manusiawi Disesuaikan (0.1s - 1.0s)
             if final_answer and success:
                 try:
                     await asyncio.sleep(random.uniform(0.1, 1.0))
                     await message.channel.send(final_answer)
-                    print(f"[SPEED] Menembak jawaban ke Discord: '{final_answer}'")
-                except Exception as send_err: 
-                    print(f"[ERROR SEND DISCORD] Gagal kirim chat: {send_err}")
+                    print(f"[SPEED] Berhasil mengirim jawaban kuis: '{final_answer}'")
+                except Exception as send_err:
+                    print(f"[ERROR SEND] {send_err}")
                 return
 
         # =========================================================
@@ -276,7 +280,6 @@ class MySelfBot(discord.Client):
                 if "sent to your main" in str_reward.lower():
                     str_reward = str_reward.split("Sent to your")[0].strip()
 
-                # KONVERSI KE WAKTU LOCAL WIB (GMT+7)
                 wib_time = datetime.utcnow() + timedelta(hours=7)
 
                 history = load_loot_history()
@@ -286,10 +289,9 @@ class MySelfBot(discord.Client):
                     "reward": str_reward
                 })
                 save_loot_history(history)
-                print("[LOOT COMMITTED] Kemenangan msdn dicatat dalam format waktu WIB.")
+                print("[LOOT COMMITTED] Hadiah tercatat di database lokal.")
 
             if is_paused:
-                print("[PAUSED MODE] Kuis selesai. Loop !c ditiadakan.")
                 return
 
             if quiz_channel_id:
