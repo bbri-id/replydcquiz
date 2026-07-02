@@ -138,7 +138,7 @@ is_paused = False
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== TARGET LINE ## MATEMATIKA AKTIF BERSAMA SAKLAR ===')
+        print('=== RE-ENGINEERING MATH CODES LIVE ARITMATIKA HARDBACK ===')
 
     async def on_message_edit(self, before, after):
         global current_trigger_task, quiz_channel_id, is_paused
@@ -151,7 +151,7 @@ class MySelfBot(discord.Client):
                 if embed.title: text_lower += embed.title.lower() + "\n"
 
         if "time's up!" in text_lower or "nobody solved it" in text_lower:
-            print("[TIMEOUT DETECTED] Kuis hangus. Memulai Smart Timer...")
+            print("[TIMEOUT DETECTED via EDIT] Kuis dikonfirmasi hangus. Memulai Smart Timer...")
             if is_paused: return
             if quiz_channel_id:
                 if current_trigger_task and not current_trigger_task.done():
@@ -216,77 +216,88 @@ class MySelfBot(discord.Client):
             final_answer = ""
             success = False
 
-            # 1. LOGIKA BARU TARGET ## (100% Lolos Hambatan Teks Lain)
+            # 1. PERBAIKAN TOTAL JALUR MATEMATIKA (SANGAT AMAN / ANTI-STUCK)
             if "math" in content_lower:
                 try:
-                    # Cari baris spesifik yang diawali dengan ##
+                    # Ambil semua baris kuis
                     lines = [l.strip() for l in full_text.split('\n') if l.strip()]
                     target_line = ""
+                    
+                    # Cari baris yang mengandung penanda soal matematika
                     for line in lines:
-                        if line.startswith("##"):
+                        if line.startswith("##") or ('=' in line and '?' in line):
                             target_line = line
                             break
                     
                     if target_line:
-                        # Hilangkan tanda ##, tanda sama dengan, dan tanda tanya
+                        # Bersihkan simbol markdown, spasi hulu hilir, dan pecah di tanda sama dengan
                         expr = target_line.replace('##', '').split('=')[0].strip()
                         
-                        # Normalisasi perkalian unicode, x biasa, dan kuadrat
+                        # Normalisasi perkalian dan kuadrat secara komprehensif
                         expr_clean = expr.replace('×', '*').replace('x', '*').replace('X', '*')
                         expr_clean = expr_clean.replace('²', '**2').replace('^2', '**2')
                         
-                        # Jalankan fungsi hitung lokal Kabataku Python
-                        hasil_lokal = eval(expr_clean)
-                        final_answer = str(int(round(hasil_lokal)))
-                        success = True
-                        print(f"[TARGET ## MATH SUCCESS] Berhasil hitung lokal: '{expr_clean}' -> {final_answer}")
+                        # Hanya izinkan karakter matematika murni agar eval() tidak melontarkan error syntax
+                        expr_purified = "".join(re.findall(r'[\d\+\-\*\/\(\)\s]+', expr_clean)).strip()
+                        
+                        if expr_purified:
+                            hasil_lokal = eval(expr_purified)
+                            final_answer = str(int(round(hasil_lokal)))
+                            success = True
+                            print(f"[MATH LOCAL SUCCESS] Perhitungan sukses: {expr_purified} = {final_answer}")
                 except Exception as math_err:
-                    print(f"[TARGET ## MATH ERROR] Hitung lokal meleset, dialihkan ke Gemini: {math_err}")
+                    # Jika hitungan lokal gagal karena alasan apapun, bot TIDAK MATI. Langsung dilempar ke Gemini
+                    print(f"[MATH LOCAL ERROR] Gagal hitung lokal, beralih ke Gemini AI: {math_err}")
 
             # 2. Jalur Cheat URL Gambar
             if not success and image_url:
-                if "challenge/flags/flag_" in image_url:
-                    match = re.search(r'flag_([^.]+)\.png', image_url)
-                    if match:
-                        final_answer = match.group(1).replace('_', ' ').title()
-                        success = True
-                elif "challenge/animals/animal_" in image_url:
-                    match = re.search(r'animal_([^.]+)\.jpg', image_url)
-                    if match:
-                        final_answer = match.group(1).replace('_', ' ').title()
-                        success = True
-                elif "challenge/logos/logo_" in image_url:
-                    match = re.search(r'(logo_\d+)\.png', image_url)
-                    if match:
-                        logo_key = match.group(1)
-                        if logo_key in LOGO_MAP:
-                            final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
+                try:
+                    if "challenge/flags/flag_" in image_url:
+                        match = re.search(r'flag_([^.]+)\.png', image_url)
+                        if match:
+                            final_answer = match.group(1).replace('_', ' ').title()
                             success = True
+                    elif "challenge/animals/animal_" in image_url:
+                        match = re.search(r'animal_([^.]+)\.jpg', image_url)
+                        if match:
+                            final_answer = match.group(1).replace('_', ' ').title()
+                            success = True
+                    elif "challenge/logos/logo_" in image_url:
+                        match = re.search(r'(logo_\d+)\.png', image_url)
+                        if match:
+                            logo_key = match.group(1)
+                            if logo_key in LOGO_MAP:
+                                final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
+                                success = True
+                except: pass
 
-            # 3. Jalur Cadangan Gemini AI
+            # 3. Jalur Cadangan Gemini Utama (Tahan banting jika penafsiran lokal meleset)
             if not success:
+                print("[GEMINI FALLBACK] Memproses kuis via cadangan Gemini...")
                 try:
                     cleaned_math_text = full_text.replace('×', '*').replace('²', '^2')
                     prompt = (
-                        f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
-                        f"dan HANYA memberikan jawaban bersih intinya saja tanpa embel-embel.\n\n"
-                        f"Isi Kuis:\n{cleaned_math_text}\nJawaban bersih:"
+                        f"Kamu adalah mesin penjawab kuis otomatis. Selesaikan kuis matematika atau kuis teks di bawah ini "
+                        f"dan HANYA berikan angka atau kata jawaban intinya saja tanpa penjelasan, tanpa pengantar, dan tanpa tanda titik.\n\n"
+                        f"Kuis:\n{cleaned_math_text}\nJawaban bersih:"
                     )
                     response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     if response and response.text:
                         final_answer = response.text.strip().replace('.', '')
-                        if final_answer: success = True
-                except Exception as e:
-                    print(f"[ERROR GEMINI] {e}")
+                        if final_answer: 
+                            success = True
+                            print(f"[GEMINI FALLBACK SUCCESS] Jawaban Gemini: {final_answer}")
+                except Exception as gemini_err:
+                    print(f"[ERROR GEMINI INTEGRAL] Gemini ikut gagal: {gemini_err}")
 
             # Eksekusi kirim ke Discord
             if final_answer and success:
                 try:
                     await asyncio.sleep(random.uniform(0.1, 1.0))
                     await message.channel.send(final_answer)
-                    print(f"[SPEED] Jawaban sukses terkirim: '{final_answer}'")
+                    print(f"[SPEED] Sukses terkirim: '{final_answer}'")
                 except Exception as send_err:
-                    print(f"[ERROR SEND] {send_err}")
+                    print(f"[ERROR SEND CHAT] {send_err}")
                 return
 
         # =========================================================
@@ -297,17 +308,19 @@ class MySelfBot(discord.Client):
 
         if is_quiz_ended or is_quiz_timeout:
             if is_quiz_ended and "msdn" in content_lower:
-                ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
-                str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
-                if "sent to your main" in str_reward.lower():
-                    str_reward = str_reward.split("Sent to your")[0].strip()
+                try:
+                    ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                    rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                    str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
+                    str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
+                    if "sent to your main" in str_reward.lower():
+                        str_reward = str_reward.split("Sent to your")[0].strip()
 
-                wib_time = datetime.utcnow() + timedelta(hours=7)
-                history = load_loot_history()
-                history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
-                save_loot_history(history)
+                    wib_time = datetime.utcnow() + timedelta(hours=7)
+                    history = load_loot_history()
+                    history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
+                    save_loot_history(history)
+                except: pass
 
             if is_paused: return
 
