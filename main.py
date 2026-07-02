@@ -138,7 +138,28 @@ is_paused = False
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== SIKLUS AKTIF: FIX MATH RUMIT & KUADRAT SAKTI ===')
+        print('=== ENGINE ANTI-CRASH & ANTI-TIMEOUT DISCORD LIVE ===')
+
+    # FIX DETEKSI TIMEOUT: Memantau pesan LionNSEX jika diedit menjadi Time's up!
+    async def on_message_edit(self, before, after):
+        global current_trigger_task, quiz_channel_id, is_paused
+        if after.author.id != TARGET_USER_ID:
+            return
+            
+        text_lower = (after.content or "") + "\n"
+        if after.embeds:
+            for embed in after.embeds:
+                if embed.description: text_lower += embed.description.lower() + "\n"
+                if embed.title: text_lower += embed.title.lower() + "\n"
+
+        if "time's up!" in text_lower or "nobody solved it" in text_lower:
+            print("[TIMEOUT DETECTED via EDIT] Kuis dikonfirmasi hangus. Memulai Smart Timer...")
+            if is_paused:
+                return
+            if quiz_channel_id:
+                if current_trigger_task and not current_trigger_task.done():
+                    current_trigger_task.cancel()
+                current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id, is_paused
@@ -201,8 +222,31 @@ class MySelfBot(discord.Client):
             final_answer = ""
             success = False
 
-            # 1. Jalur Cheat URL Gambar
-            if image_url:
+            # 1. FIX MATH CHALLENGE UTAMA: Menggunakan Sistem Hitung Lokal (Regex + Eval)
+            # Sangat andal menangkap tipe perkalian 'x', tanda kurung '()', dan kuadrat '^2' / '²'
+            if "math" in content_lower:
+                try:
+                    # Normalisasi string matematika agar bisa dihitung Python
+                    math_expr = full_text.replace('²', '**2').replace('²', '^2')
+                    math_expr = math_expr.replace('x', '*').replace('X', '*')
+                    
+                    # Ambil baris yang memiliki pola hitungan aritmatika dasar
+                    match_math = re.search(r'([\d\s\+\-\*\/\(\)\*\*]+)\s*=\s*\?', math_expr)
+                    if match_math:
+                        expr_clean = match_math.group(1).strip()
+                        # Bersihkan tanda ^2 jika ada menjadi format pangkat python **2
+                        expr_clean = expr_clean.replace('^2', '**2')
+                        
+                        # Hitung secara instan dan aman di skrip lokal
+                        hasil_lokal = eval(expr_clean)
+                        final_answer = str(int(hasil_lokal))
+                        success = True
+                        print(f"[LOCAL MATH SUCCESS] Berhasil menghitung otomatis secara lokal: {final_answer}")
+                except Exception as math_err:
+                    print(f"[LOCAL MATH ERROR] Gagal menghitung aritmatika secara lokal, mengoper ke Gemini: {math_err}")
+
+            # 2. Jalur Cheat URL Gambar (Flags, Animals, Logos)
+            if not success and image_url:
                 if "challenge/flags/flag_" in image_url:
                     match = re.search(r'flag_([^.]+)\.png', image_url)
                     if match:
@@ -221,80 +265,51 @@ class MySelfBot(discord.Client):
                             final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
                             success = True
 
-            # 2. Jalur Gemini (DENGAN RE-FORMAT KUADRAT OTOMATIS & PROMPT SUPER AMAN)
+            # 3. Jalur Cadangan Gemini AI (Jika hitungan lokal / URL tidak membuahkan hasil)
             if not success:
                 try:
-                    # AMAN: Ganti karakter pangkat '²' menjadi teks '^2' agar Gemini 100% paham itu kuadrat
                     cleaned_math_text = full_text.replace('²', '^2')
-
                     prompt = (
                         f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
-                        f"dan HANYA memberikan jawaban bersih intinya saja tanpa embel-embel, tanpa penjelasan, "
-                        f"tanpa tanda baca titik, tanpa kalimat pengantar, dan tanpa format Markdown.\n\n"
-                        f"Aturan Khusus Matematika (Math Challenge):\n"
-                        f"- Selesaikan perhitungan aritmatika dengan benar sesuai prioritas matematika.\n"
-                        f"- Tanda '^2' artinya kuadrat atau pangkat dua (contoh: 12^2 artinya 12 dikali 12).\n"
-                        f"- Huruf 'x' atau 'X' berarti perkalian (*).\n"
-                        f"- Jika ada tanda kurung, hitung isi kurung terlebih dahulu.\n"
-                        f"- Berikan HANYA HASIL ANGKA NYA SAJA.\n"
-                        f"Contoh Kuis 1: 12^2 = ?\nJawaban bersih: 144\n"
-                        f"Contoh Kuis 2: (5 + 5) x 2 = ?\nJawaban bersih: 20\n\n"
-                        f"Isi Kuis:\n{cleaned_math_text}\n"
-                        f"Jawaban bersih:"
+                        f"dan HANYA memberikan jawaban bersih intinya saja tanpa embel-embel.\n\n"
+                        f"Isi Kuis:\n{cleaned_math_text}\nJawaban bersih:"
                     )
-
-                    response = ai_client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=prompt,
-                    )
-                    
+                    response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     if response and response.text:
-                        final_answer = response.text.strip()
-                        if final_answer.endswith('.'):
-                            final_answer = final_answer[:-1]
-                        if final_answer:
-                            success = True
+                        final_answer = response.text.strip().replace('.', '')
+                        if final_answer: success = True
                 except Exception as e:
-                    print(f"[ERROR GEMINI] Gagal memproses kuis matematika/teks: {e}")
+                    print(f"[ERROR GEMINI] Gagal memproses cadangan Gemini: {e}")
 
-            # Kirim Jawaban ke Discord
+            # Eksekusi pengiriman cepat (0.1 - 1.0s jeda)
             if final_answer and success:
                 try:
                     await asyncio.sleep(random.uniform(0.1, 1.0))
                     await message.channel.send(final_answer)
-                    print(f"[SPEED] Berhasil mengirim jawaban kuis: '{final_answer}'")
+                    print(f"[SPEED] Jawaban dikirim ke Discord: '{final_answer}'")
                 except Exception as send_err:
                     print(f"[ERROR SEND] {send_err}")
                 return
 
         # =========================================================
-        # ALUR B: REKAPAN HADIAH & SIKLUS SMART TIMER
+        # ALUR B: REKAPAN HADIAH & BERSILANG PADA MESSAGE BARU
         # =========================================================
         is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower
         is_quiz_timeout = "time's up!" in content_lower or "nobody solved it" in content_lower
 
         if is_quiz_ended or is_quiz_timeout:
-            
             if is_quiz_ended and "msdn" in content_lower:
                 ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                 rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                
                 str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
                 str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
-                
                 if "sent to your main" in str_reward.lower():
                     str_reward = str_reward.split("Sent to your")[0].strip()
 
                 wib_time = datetime.utcnow() + timedelta(hours=7)
-
                 history = load_loot_history()
-                history.insert(0, {
-                    "time": wib_time.strftime('%Y-%m-%d %H:%M:%S'),
-                    "answer": str_answer,
-                    "reward": str_reward
-                })
+                history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
                 save_loot_history(history)
-                print("[LOOT COMMITTED] Hadiah tercatat di database lokal.")
 
             if is_paused:
                 return
