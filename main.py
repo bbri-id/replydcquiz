@@ -138,7 +138,7 @@ is_paused = False
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== SIKLUS AKTIF: FILTER REGEX MATEMATIKA TOTAL ABSOLUT ===')
+        print('=== TARGET LINE ## MATEMATIKA AKTIF BERSAMA SAKLAR ===')
 
     async def on_message_edit(self, before, after):
         global current_trigger_task, quiz_channel_id, is_paused
@@ -216,32 +216,34 @@ class MySelfBot(discord.Client):
             final_answer = ""
             success = False
 
-            # 1. FIX ABSOLUT MATEMATIKA: Ekstraksi String Matematika menggunakan Pembersihan Regex Total
+            # 1. LOGIKA BARU TARGET ## (100% Lolos Hambatan Teks Lain)
             if "math" in content_lower:
                 try:
-                    # Ambil bagian teks utama kuis sebelum tanda tanya "?" atau sama dengan
-                    raw_target = full_text.split('?')[0].split('=')[0]
+                    # Cari baris spesifik yang diawali dengan ##
+                    lines = [l.strip() for l in full_text.split('\n') if l.strip()]
+                    target_line = ""
+                    for line in lines:
+                        if line.startswith("##"):
+                            target_line = line
+                            break
                     
-                    # Bersihkan baris instruksi umum bawaan bot agar tidak mengganggu rumus
-                    raw_target = re.sub(r'(solve it!|first correct|random reward|60 seconds|type your answer)', '', raw_target, flags=re.IGNORECASE)
-                    
-                    # Normalisasi simbol perkalian dan kuadrat
-                    expr = raw_target.replace('×', '*').replace('x', '*').replace('X', '*')
-                    expr = expr.replace('²', '**2').replace('^2', '**2')
-                    
-                    # REGEX PURIFIKASI: Hanya sisakan angka dan operator matematika valid
-                    expr_clean = "".join(re.findall(r'[\d\+\-\*\/\(\)\s\.]+', expr)).strip()
-                    
-                    if expr_clean:
+                    if target_line:
+                        # Hilangkan tanda ##, tanda sama dengan, dan tanda tanya
+                        expr = target_line.replace('##', '').split('=')[0].strip()
+                        
+                        # Normalisasi perkalian unicode, x biasa, dan kuadrat
+                        expr_clean = expr.replace('×', '*').replace('x', '*').replace('X', '*')
+                        expr_clean = expr_clean.replace('²', '**2').replace('^2', '**2')
+                        
                         # Jalankan fungsi hitung lokal Kabataku Python
                         hasil_lokal = eval(expr_clean)
                         final_answer = str(int(round(hasil_lokal)))
                         success = True
-                        print(f"[MATEMATIKA ABSOLUT] Sukses Ekstraksi: '{expr_clean}' -> Hasil: {final_answer}")
+                        print(f"[TARGET ## MATH SUCCESS] Berhasil hitung lokal: '{expr_clean}' -> {final_answer}")
                 except Exception as math_err:
-                    print(f"[MATEMATIKA ABSOLUT ERROR] Perhitungan lokal gagal, gunakan opsi cadangan: {math_err}")
+                    print(f"[TARGET ## MATH ERROR] Hitung lokal meleset, dialihkan ke Gemini: {math_err}")
 
-            # 2. Jalur Cheat URL Gambar (Flags, Animals, Logos)
+            # 2. Jalur Cheat URL Gambar
             if not success and image_url:
                 if "challenge/flags/flag_" in image_url:
                     match = re.search(r'flag_([^.]+)\.png', image_url)
@@ -261,7 +263,7 @@ class MySelfBot(discord.Client):
                             final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
                             success = True
 
-            # 3. Jalur Cadangan Gemini AI (Jika ada kegagalan tak terduga)
+            # 3. Jalur Cadangan Gemini AI
             if not success:
                 try:
                     cleaned_math_text = full_text.replace('×', '*').replace('²', '^2')
