@@ -138,25 +138,11 @@ is_paused = False
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== RE-ENGINEERING MATH CODES LIVE ARITMATIKA HARDBACK ===')
+        print('=== ALUR BARU SELESAI SOAL -> PASTI TUNGGU 60 DETIK LALU !c ===')
 
     async def on_message_edit(self, before, after):
-        global current_trigger_task, quiz_channel_id, is_paused
-        if after.author.id != TARGET_USER_ID: return
-            
-        text_lower = (after.content or "") + "\n"
-        if after.embeds:
-            for embed in after.embeds:
-                if embed.description: text_lower += embed.description.lower() + "\n"
-                if embed.title: text_lower += embed.title.lower() + "\n"
-
-        if "time's up!" in text_lower or "nobody solved it" in text_lower:
-            print("[TIMEOUT DETECTED via EDIT] Kuis dikonfirmasi hangus. Memulai Smart Timer...")
-            if is_paused: return
-            if quiz_channel_id:
-                if current_trigger_task and not current_trigger_task.done():
-                    current_trigger_task.cancel()
-                current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
+        # Kita nonaktifkan pelacakan timeout via edit karena alur baru sudah pasti dipicu 60 detik dari awal soal keluar
+        return
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id, is_paused
@@ -176,18 +162,13 @@ class MySelfBot(discord.Client):
                 if quiz_channel_id:
                     if current_trigger_task and not current_trigger_task.done():
                         current_trigger_task.cancel()
-                    current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
+                    current_trigger_task = asyncio.create_task(self.smart_trigger_sequence(0.5))
             return
 
         if message.author.id != TARGET_USER_ID: return
 
         if message.content.strip() == "!c" or message.embeds:
             quiz_channel_id = message.channel.id
-
-        if current_trigger_task and not current_trigger_task.done():
-            if message.content.strip() == "!c" or "60 seconds" in message.content.lower() or message.embeds:
-                current_trigger_task.cancel()
-                current_trigger_task = None
 
         full_text = ""
         image_url = ""
@@ -207,47 +188,46 @@ class MySelfBot(discord.Client):
         content_lower = full_text.lower()
 
         # =========================================================
-        # ALUR A: MENJAWAB KUIS
+        # ALUR A: MENJAWAB KUIS & PASANG TIMER 60 DETIK
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
             if is_paused: return
 
             print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
+            
+            # 🛑 UBAH ALUR UTAMA: Begitu soal keluar, batalkan task lama & langsung jadwalkan !c dalam 60 detik ke depan
+            if quiz_channel_id:
+                if current_trigger_task and not current_trigger_task.done():
+                    current_trigger_task.cancel()
+                current_trigger_task = asyncio.create_task(self.smart_trigger_sequence(60.0))
+                print("[TIMER LOCK] Soal keluar, mengunci waktu tunggu 60 detik sebelum !c berikutnya...")
+
             final_answer = ""
             success = False
 
-            # 1. PERBAIKAN TOTAL JALUR MATEMATIKA (SANGAT AMAN / ANTI-STUCK)
+            # 1. Logika Matematika Baris ##
             if "math" in content_lower:
                 try:
-                    # Ambil semua baris kuis
                     lines = [l.strip() for l in full_text.split('\n') if l.strip()]
                     target_line = ""
-                    
-                    # Cari baris yang mengandung penanda soal matematika
                     for line in lines:
                         if line.startswith("##") or ('=' in line and '?' in line):
                             target_line = line
                             break
                     
                     if target_line:
-                        # Bersihkan simbol markdown, spasi hulu hilir, dan pecah di tanda sama dengan
                         expr = target_line.replace('##', '').split('=')[0].strip()
-                        
-                        # Normalisasi perkalian dan kuadrat secara komprehensif
                         expr_clean = expr.replace('×', '*').replace('x', '*').replace('X', '*')
                         expr_clean = expr_clean.replace('²', '**2').replace('^2', '**2')
-                        
-                        # Hanya izinkan karakter matematika murni agar eval() tidak melontarkan error syntax
                         expr_purified = "".join(re.findall(r'[\d\+\-\*\/\(\)\s]+', expr_clean)).strip()
                         
                         if expr_purified:
                             hasil_lokal = eval(expr_purified)
                             final_answer = str(int(round(hasil_lokal)))
                             success = True
-                            print(f"[MATH LOCAL SUCCESS] Perhitungan sukses: {expr_purified} = {final_answer}")
+                            print(f"[MATH SUCCESS] Hasil hitung lokal: '{expr_purified}' -> {final_answer}")
                 except Exception as math_err:
-                    # Jika hitungan lokal gagal karena alasan apapun, bot TIDAK MATI. Langsung dilempar ke Gemini
-                    print(f"[MATH LOCAL ERROR] Gagal hitung lokal, beralih ke Gemini AI: {math_err}")
+                    print(f"[MATH ERROR] Hitung lokal gagal, dialihkan ke Gemini: {math_err}")
 
             # 2. Jalur Cheat URL Gambar
             if not success and image_url:
@@ -271,73 +251,64 @@ class MySelfBot(discord.Client):
                                 success = True
                 except: pass
 
-            # 3. Jalur Cadangan Gemini Utama (Tahan banting jika penafsiran lokal meleset)
+            # 3. Jalur Cadangan Gemini AI
             if not success:
-                print("[GEMINI FALLBACK] Memproses kuis via cadangan Gemini...")
                 try:
                     cleaned_math_text = full_text.replace('×', '*').replace('²', '^2')
                     prompt = (
-                        f"Kamu adalah mesin penjawab kuis otomatis. Selesaikan kuis matematika atau kuis teks di bawah ini "
-                        f"dan HANYA berikan angka atau kata jawaban intinya saja tanpa penjelasan, tanpa pengantar, dan tanpa tanda titik.\n\n"
-                        f"Kuis:\n{cleaned_math_text}\nJawaban bersih:"
+                        f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
+                        f"dan HANYA memberikan jawaban bersih intinya saja tanpa embel-embel.\n\n"
+                        f"Isi Kuis:\n{cleaned_math_text}\nJawaban bersih:"
                     )
                     response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
                     if response and response.text:
                         final_answer = response.text.strip().replace('.', '')
-                        if final_answer: 
-                            success = True
-                            print(f"[GEMINI FALLBACK SUCCESS] Jawaban Gemini: {final_answer}")
-                except Exception as gemini_err:
-                    print(f"[ERROR GEMINI INTEGRAL] Gemini ikut gagal: {gemini_err}")
+                        if final_answer: success = True
+                except: pass
 
-            # Eksekusi kirim ke Discord
+            # Eksekusi kirim jawaban ke Discord (Jeda aman)
             if final_answer and success:
                 try:
                     await asyncio.sleep(random.uniform(0.1, 1.0))
                     await message.channel.send(final_answer)
-                    print(f"[SPEED] Sukses terkirim: '{final_answer}'")
+                    print(f"[SPEED] Jawaban sukses terkirim: '{final_answer}'")
                 except Exception as send_err:
-                    print(f"[ERROR SEND CHAT] {send_err}")
+                    print(f"[ERROR SEND] {send_err}")
                 return
 
         # =========================================================
-        # ALUR B: REKAPAN HADIAH & SIKLUS SMART TIMER
+        # ALUR B: REKAPAN HADIAH (Siklus Timer dipindahkan ke atas)
         # =========================================================
         is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower
-        is_quiz_timeout = "time's up!" in content_lower or "nobody solved it" in content_lower
 
-        if is_quiz_ended or is_quiz_timeout:
-            if is_quiz_ended and "msdn" in content_lower:
-                try:
-                    ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                    rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                    str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
-                    str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
-                    if "sent to your main" in str_reward.lower():
-                        str_reward = str_reward.split("Sent to your")[0].strip()
+        if is_quiz_ended and "msdn" in content_lower:
+            try:
+                ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
+                str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
+                if "sent to your main" in str_reward.lower():
+                    str_reward = str_reward.split("Sent to your")[0].strip()
 
-                    wib_time = datetime.utcnow() + timedelta(hours=7)
-                    history = load_loot_history()
-                    history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
-                    save_loot_history(history)
-                except: pass
+                wib_time = datetime.utcnow() + timedelta(hours=7)
+                history = load_loot_history()
+                history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
+                save_loot_history(history)
+            except: pass
 
-            if is_paused: return
-
-            if quiz_channel_id:
-                if current_trigger_task and not current_trigger_task.done():
-                    current_trigger_task.cancel()
-                current_trigger_task = asyncio.create_task(self.smart_trigger_sequence())
-
-    async def smart_trigger_sequence(self):
-        global quiz_channel_id
+    async def smart_trigger_sequence(self, seconds_to_wait):
+        global quiz_channel_id, is_paused
         try:
-            wait_time = random.uniform(6, 10)
-            await asyncio.sleep(wait_time)
+            # Menunggu sesuai durasi yang di-passing (60 detik)
+            await asyncio.sleep(seconds_to_wait)
+            if is_paused: return
+            
             if quiz_channel_id:
                 target_channel = self.get_channel(quiz_channel_id)
                 if target_channel:
-                    try: await target_channel.send("!c")
+                    try: 
+                        await target_channel.send("!c")
+                        print(f"[TIMER DONE] Batas 60 detik selesai. Mengirim !c kembali.")
                     except: pass
         except asyncio.CancelledError:
             pass
