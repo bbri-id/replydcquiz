@@ -10,10 +10,13 @@ from threading import Thread
 from datetime import datetime, timedelta, timezone
 
 # =========================================================
-# 1. SETUP WEB SERVER MINI & REKAPAN HADIAH (WIB TIME)
+# 1. SETUP WEB SERVER MINI, REKAPAN HADIAH, & STATS DASHBOARD
 # =========================================================
 app = Flask('')
 DB_FILE = "loot_history.json"
+
+# Rekam waktu saat skrip/server pertama kali dijalankan
+START_TIME_UTC = datetime.now(timezone.utc)
 
 def load_loot_history():
     if os.path.exists(DB_FILE):
@@ -36,6 +39,10 @@ HTML_TEMPLATE = """
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e24; color: #fff; margin: 20px; }
         h2 { color: #5865F2; border-bottom: 2px solid #5865F2; padding-bottom: 10px; }
+        .stats-box { background-color: #2f3136; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #43b581; }
+        .stats-box p { margin: 5px 0; font-size: 0.95em; color: #dcddde; }
+        .stats-box strong { color: #fff; }
+        .highlight-xp { color: #faa61a; font-weight: bold; font-size: 1.1em; }
         .table-container { overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; background-color: #2f3136; border-radius: 8px; overflow: hidden; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; }
@@ -46,7 +53,14 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body>
-    <h2>🏆 Rekapan Hadiah Kuis (User: msdn) - Waktu GMT+7 (WIB)</h2>
+    <h2>🏆 Rekapan Hadiah Kuis (User: msdn)</h2>
+    
+    <div class="stats-box">
+        <p>🟢 <strong>Server Up since:</strong> {{ start_str }}</p>
+        <p>⏱️ <strong>Bot running:</strong> {{ uptime_str }}</p>
+        <p>✨ <strong>XP Gained (This Session):</strong> <span class="highlight-xp">{{ total_xp }} %</span></p>
+    </div>
+
     <div class="table-container">
         <table>
             <thead>
@@ -69,7 +83,39 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def home():
-    return render_template_string(HTML_TEMPLATE, loots=load_loot_history())
+    loots = load_loot_history()
+    
+    # 1. Hitung Uptime
+    now_utc = datetime.now(timezone.utc)
+    uptime_delta = now_utc - START_TIME_UTC
+    hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
+    minutes, _ = divmod(remainder, 60)
+    
+    start_time_wib = START_TIME_UTC + timedelta(hours=7)
+    start_str = start_time_wib.strftime('%d %B %Y %H.%M WIB')
+    uptime_str = f"{hours} Hours {minutes} Minutes"
+    
+    # 2. Hitung Total XP khusus di sesi server saat ini
+    total_xp = 0
+    start_time_naive = start_time_wib.replace(tzinfo=None) # Hilangkan timezone info untuk komparasi dengan string JSON
+    
+    for loot in loots:
+        try:
+            loot_time = datetime.strptime(loot["time"], '%Y-%m-%d %H:%M:%S')
+            # Hanya hitung loot yang didapat setelah server ini menyala
+            if loot_time >= start_time_naive:
+                # Ekstrak angka yang menempel dengan "%" atau "XP" (Contoh: "15%", "15 XP", "15% XP")
+                match = re.search(r'(\d+)\s*(?:%|xp)', loot["reward"], re.IGNORECASE)
+                if match:
+                    total_xp += int(match.group(1))
+        except:
+            pass
+            
+    return render_template_string(HTML_TEMPLATE, 
+                                  loots=loots, 
+                                  start_str=start_str, 
+                                  uptime_str=uptime_str,
+                                  total_xp=total_xp)
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -239,7 +285,7 @@ class MySelfBot(discord.Client):
             if final_answer and success:
                 # PENYESUAIAN SLOWMODE 5 DETIK SAAT MENGIRIM JAWABAN
                 time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                safe_buffer = 6.0 # Batas minimal 6 detik (biar aman dari slowmode 5 detik)
+                safe_buffer = 6.0 
                 
                 if time_since_last_send < safe_buffer:
                     delay = safe_buffer - time_since_last_send + random.uniform(0.1, 0.5)
@@ -247,7 +293,6 @@ class MySelfBot(discord.Client):
                     await asyncio.sleep(delay)
                 
                 try:
-                    # Tambahan sedikit jeda acak manusiawi (0.5 - 1.5 detik)
                     await asyncio.sleep(random.uniform(0.5, 1.5))
                     await message.channel.send(final_answer)
                     last_send_time = datetime.now(timezone.utc)
@@ -283,7 +328,7 @@ class MySelfBot(discord.Client):
             
             # PENYESUAIAN SLOWMODE 5 DETIK UNTUK MENGIRIM !c
             time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-            required_wait = random.uniform(7.0, 12.0) # Jeda optimal untuk by-pass 5 detik tanpa kelamaan
+            required_wait = random.uniform(7.0, 12.0) 
             
             if time_since_last_send < required_wait:
                 wait_time = required_wait - time_since_last_send
@@ -319,7 +364,6 @@ class MySelfBot(discord.Client):
 
             time_silent = (datetime.now(timezone.utc) - last_activity_time).total_seconds()
             
-            # Karena fast track kita sekarang sangat cepat, background guard cukup 90 detik
             if time_silent >= 90.0:
                 is_triggering_c = True
                 print(f"[BACKGROUND] Sepi selama {int(time_silent)} detik. Memancing !c baru...")
