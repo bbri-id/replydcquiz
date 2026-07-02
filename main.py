@@ -86,7 +86,6 @@ LOGO_MAP = {
     "logo_117": "palace", "logo_118": "kappa", "logo_119": "burberry", "logo_120": "puma",
     "logo_121": "reebok", "logo_125": "diesel", "logo_126": "fila", "logo_127": "versace",
     "logo_129": "hollister", "logo_133": "nike", "logo_136": "ck", "logo_138": "fred perry",
-    
     "logo_201": "apple", "logo_202": "dolby", "logo_203": "philips", "logo_204": "alibaba",
     "logo_206": "cisco", "logo_207": "intel", "logo_208": "adobe", "logo_209": "alcatel",
     "logo_210": "amazon", "logo_211": "amd", "logo_212": "asus", "logo_214": "dell",
@@ -96,7 +95,6 @@ LOGO_MAP = {
     "logo_228": "seagate", "logo_229": "ericsson", "logo_230": "beats", "logo_231": "xiaomi",
     "logo_232": "uber", "logo_233": "youtube", "logo_234": "twitter", "logo_235": "Blackberry",
     "logo_236": "dropbox", "logo_237": "facebook", "logo_238": "google", "logo_239": "snapchat",
-    
     "logo_301": "netflix", "logo_302": "nintendo", "logo_303": "universal", "logo_304": "walking dead",
     "logo_305": "gameloft", "logo_306": "game of thrones", "logo_307": "discovery", "logo_308": "monopoly",
     "logo_309": "konami", "logo_311": "bandai", "choice_313": "warner bros", "logo_314": "rockstar",
@@ -105,7 +103,6 @@ LOGO_MAP = {
     "logo_329": "sega", "logo_330": "star wars", "logo_331": "tencent", "logo_332": "terminator",
     "logo_333": "tiktok", "logo_334": "titanic", "logo_335": "soundcloud", "logo_336": "ubisoft",
     "logo_337": "lego", "logo_338": "discord", "logo_339": "spotify",
-    
     "logo_402": "cadillac", "logo_403": "chevrolet", "logo_404": "mini", "logo_405": "porsche",
     "logo_406": "citroen", "logo_408": "infiniti", "logo_409": "jaguar", "logo_410": "volkswagen",
     "logo_411": "lexus", "logo_412": "peugeot", "logo_413": "mitsubishi", "logo_414": "suzuki",
@@ -114,7 +111,6 @@ LOGO_MAP = {
     "logo_424": "honda", "logo_425": "hyundai", "logo_426": "koenigsegg", "logo_430": "mazda",
     "logo_431": "nissan", "logo_432": "opel", "logo_433": "renault", "logo_435": "seat",
     "logo_437": "subaru", "logo_438": "volvo", "logo_439": "bmw",
-    
     "logo_501": "harley", "logo_502": "nescafe"
 }
 
@@ -135,17 +131,18 @@ ai_client = genai.Client(api_key=API_KEY_GEMINI)
 is_paused = False  
 is_triggering_c = False
 last_activity_time = datetime.now(timezone.utc)
+last_send_time = datetime.now(timezone.utc)
 
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print(f'=== KUNCI TARGET CHANNEL AKTIF: {TARGET_CHANNEL_ID} ===')
+        print(f'=== ANTI-SLOWMODE (5s) AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===')
         self.loop.create_task(self.background_30s_loop())
 
     async def on_message(self, message):
-        global is_paused, last_activity_time, is_triggering_c
+        global is_paused, last_activity_time, is_triggering_c, last_send_time
         
-        # --- SAKLAR REMOTE CONTROL (Bisa dilakukan dari channel mana saja) ---
+        # --- SAKLAR REMOTE CONTROL ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
@@ -157,11 +154,12 @@ class MySelfBot(discord.Client):
                 last_activity_time = datetime.now(timezone.utc)
             return
 
-        # 🛑 FILTER ABSOLUT: Abaikan semua pesan yang bukan dari Channel Target & Bot Target
-        if message.channel.id != TARGET_CHANNEL_ID:
-            return
-        if message.author.id != TARGET_USER_ID:
-            return
+        # 🛑 FILTER ABSOLUT: Hanya dengarkan pesan di TARGET_CHANNEL_ID dari LionNSEX
+        if message.channel.id != TARGET_CHANNEL_ID: return
+        if message.author.id != TARGET_USER_ID: return
+
+        # Reset global timer tiap ada aktivitas di channel target
+        last_activity_time = datetime.now(timezone.utc)
 
         full_text = ""
         image_url = ""
@@ -184,7 +182,6 @@ class MySelfBot(discord.Client):
         # ALUR 1: MENJAWAB SOAL BARU
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
-            last_activity_time = datetime.now(timezone.utc)
             if is_paused: return
 
             print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
@@ -240,11 +237,23 @@ class MySelfBot(discord.Client):
                 except: pass
 
             if final_answer and success:
+                # PENYESUAIAN SLOWMODE 5 DETIK SAAT MENGIRIM JAWABAN
+                time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
+                safe_buffer = 6.0 # Batas minimal 6 detik (biar aman dari slowmode 5 detik)
+                
+                if time_since_last_send < safe_buffer:
+                    delay = safe_buffer - time_since_last_send + random.uniform(0.1, 0.5)
+                    print(f"[SLOWMODE GUARD] Menunda pengiriman jawaban selama {delay:.2f} detik...")
+                    await asyncio.sleep(delay)
+                
                 try:
-                    await asyncio.sleep(random.uniform(0.5, 2.0))
+                    # Tambahan sedikit jeda acak manusiawi (0.5 - 1.5 detik)
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
                     await message.channel.send(final_answer)
+                    last_send_time = datetime.now(timezone.utc)
+                    print(f"[SPEED] Mengirim jawaban: '{final_answer}'")
                 except Exception as e:
-                    print(f"[ERROR SEND] {e}")
+                    print(f"[ERROR SEND JAWABAN] {e}")
                 return
 
         # =========================================================
@@ -253,8 +262,6 @@ class MySelfBot(discord.Client):
         is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower or "challenge solved" in content_lower or "time's up!" in content_lower
 
         if is_quiz_ended:
-            last_activity_time = datetime.now(timezone.utc)
-            
             if "msdn" in content_lower:
                 try:
                     ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
@@ -273,24 +280,35 @@ class MySelfBot(discord.Client):
             if is_paused or is_triggering_c: return
 
             is_triggering_c = True
-            print("[ANTI-SPAM GUARD] Menunggu jeda natural 12-22 detik sebelum !c berikutnya...")
-            await asyncio.sleep(random.uniform(12.0, 22.0))
+            
+            # PENYESUAIAN SLOWMODE 5 DETIK UNTUK MENGIRIM !c
+            time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
+            required_wait = random.uniform(7.0, 12.0) # Jeda optimal untuk by-pass 5 detik tanpa kelamaan
+            
+            if time_since_last_send < required_wait:
+                wait_time = required_wait - time_since_last_send
+                print(f"[COOLDOWN GUARD] Menunggu {wait_time:.2f} detik (Melewati Slowmode) sebelum !c berikutnya...")
+                await asyncio.sleep(wait_time)
             
             target_channel = self.get_channel(TARGET_CHANNEL_ID)
             if target_channel:
                 try:
+                    print("[ACTION] Mencoba mengirim !c...")
                     await target_channel.send("!c")
                     last_activity_time = datetime.now(timezone.utc)
-                    print("[FAST TRACK SUCCESS] !c dikirim dengan aman ke target channel.")
+                    last_send_time = datetime.now(timezone.utc)
+                    print("[FAST TRACK SUCCESS] !c berhasil dikirim dengan instan (bypass slowmode).")
                 except Exception as e:
-                    print(f"[FAILED TO SEND !c] {e}")
+                    last_activity_time = datetime.now(timezone.utc)
+                    print(f"[FAILED TO SEND !c] Terkena error: {e}")
+                    
             is_triggering_c = False
 
     # =========================================================
     # BACKGROUND WORKER LOOP (Setiap 30 Detik)
     # =========================================================
     async def background_30s_loop(self):
-        global is_paused, last_activity_time, is_triggering_c
+        global is_paused, last_activity_time, is_triggering_c, last_send_time
         await self.wait_until_ready()
         
         while not self.is_closed():
@@ -301,17 +319,20 @@ class MySelfBot(discord.Client):
 
             time_silent = (datetime.now(timezone.utc) - last_activity_time).total_seconds()
             
-            # CEK JIKA MATI TOTAL SELAMA 2 MENIT
-            if time_silent >= 120.0:
+            # Karena fast track kita sekarang sangat cepat, background guard cukup 90 detik
+            if time_silent >= 90.0:
                 is_triggering_c = True
                 print(f"[BACKGROUND] Sepi selama {int(time_silent)} detik. Memancing !c baru...")
+                
                 target_channel = self.get_channel(TARGET_CHANNEL_ID)
                 if target_channel:
                     try:
                         await target_channel.send("!c")
-                        last_activity_time = datetime.now(timezone.utc)
+                        last_send_time = datetime.now(timezone.utc)
                     except Exception as e:
                         print(f"[BACKGROUND ERROR] {e}")
+                
+                last_activity_time = datetime.now(timezone.utc)
                 is_triggering_c = False
 
 client = MySelfBot()
