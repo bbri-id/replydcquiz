@@ -129,7 +129,6 @@ if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID:
     print("Error: Variabel lingkungan belum diisi lengkap!")
     exit(1)
 
-# Menggunakan Client murni dari berkas lama Anda yang terbukti lancar jaya
 ai_client = genai.Client(api_key=API_KEY_GEMINI)
 
 current_trigger_task = None
@@ -139,7 +138,7 @@ is_paused = False
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== SIKLUS AKTIF: INTEGRASI UTAMA MATH MANDIRI & CHEAT URL ===')
+        print('=== SIKLUS AKTIF: OPTIMASI PROMPT MATH KURUNG & PERKALIAN ===')
 
     async def on_message(self, message):
         global current_trigger_task, quiz_channel_id, is_paused
@@ -191,7 +190,7 @@ class MySelfBot(discord.Client):
         content_lower = full_text.lower()
 
         # =========================================================
-        # ALUR A: MENJAWAB KUIS (DENGAN STRATEGI TERPADU SCRIPT AWAL)
+        # ALUR A: MENJAWAB KUIS
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
             if is_paused:
@@ -202,7 +201,7 @@ class MySelfBot(discord.Client):
             final_answer = ""
             success = False
 
-            # 1. Cek Jalur Cheat URL Terlebih Dahulu (Hemat Kuota & Cepat)
+            # 1. Jalur Cheat URL Gambar
             if image_url:
                 if "challenge/flags/flag_" in image_url:
                     match = re.search(r'flag_([^.]+)\.png', image_url)
@@ -222,18 +221,19 @@ class MySelfBot(discord.Client):
                             final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
                             success = True
 
-            # 2. Jika Bukan Kuis Gambar, Lempar ke Rumus Super Ketat Gemini Bawaan Awal Anda
+            # 2. Jalur Gemini (DENGAN PENYEMPURNAAN PROMPT OPERASI MATEMATIKA BERGANDA)
             if not success:
                 try:
                     prompt = (
                         f"Kamu adalah mesin penjawab kuis otomatis. Tugasmu adalah memecahkan kuis di bawah ini "
-                        f"and HANYA memberikan satu atau dua kata jawaban intinya saja tanpa embel-embel, tanpa penjelasan, "
-                        f"tanpa tanda baca titik, tanpa kalimat pengantar, dan tanpa Markdown.\n\n"
-                        f"Aturan Khusus:\n"
-                        f"- Jika kuis matematika (Math Challenge), berikan HASIL ANGKA NYA SAJA (contoh: 24).\n"
-                        f"- Jika kuis tebak logo/brand (Guess the Logo), sebutkan NAMA BRAND NYA SAJA (contoh: Chanel).\n"
-                        f"- Jika kuis tebak negara/bendera (Guess the Country), sebutkan NAMA NEGARANYA SAJA (contoh: Switzerland).\n"
-                        f"- Jika kuis tebak hewan (Guess the Animal), sebutkan NAMA HEWANNYA SAJA (contoh: Guppy).\n\n"
+                        f"dan HANYA memberikan jawaban bersih intinya saja tanpa embel-embel, tanpa penjelasan, "
+                        f"tanpa tanda baca titik, tanpa kalimat pengantar, dan tanpa format Markdown.\n\n"
+                        f"Aturan Khusus Matematika (Math Challenge):\n"
+                        f"- Selesaikan perhitungan aritmatika dengan benar sesuai prioritas matematika.\n"
+                        f"- Huruf 'x' atau 'X' berarti perkalian (*).\n"
+                        f"- Jika ada tanda kurung seperti (A + B) x C, hitung isi kurung terlebih dahulu baru dikalikan.\n"
+                        f"- Berikan HANYA HASIL ANGKA NYA SAJA.\n"
+                        f"Contoh Kuis: (5 + 5) x 2 = ?\nJawaban bersih: 20\n\n"
                         f"Isi Kuis:\n{full_text}\n"
                         f"Jawaban bersih:"
                     )
@@ -252,7 +252,7 @@ class MySelfBot(discord.Client):
                 except Exception as e:
                     print(f"[ERROR GEMINI] Gagal memproses kuis matematika/teks: {e}")
 
-            # Eksekusi Pengiriman Pesan Ke Discord dengan Jeda Manusiawi Disesuaikan (0.1s - 1.0s)
+            # Kirim Jawaban ke Discord
             if final_answer and success:
                 try:
                     await asyncio.sleep(random.uniform(0.1, 1.0))
@@ -263,7 +263,7 @@ class MySelfBot(discord.Client):
                 return
 
         # =========================================================
-        # ALUR B: REKAPAN HADIAH & PERSIAPAN SIKLUS SMART TIMER
+        # ALUR B: REKAPAN HADIAH & SIKLUS SMART TIMER
         # =========================================================
         is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower
         is_quiz_timeout = "time's up!" in content_lower or "nobody solved it" in content_lower
