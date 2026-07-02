@@ -124,28 +124,28 @@ LOGO_MAP = {
 TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
 API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
 TARGET_USER_ID = int(os.getenv('TARGET_USER_ID')) if os.getenv('TARGET_USER_ID') else None
+TARGET_CHANNEL_ID = int(os.getenv('TARGET_CHANNEL_ID')) if os.getenv('TARGET_CHANNEL_ID') else None
 
-if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID:
-    print("Error: Variabel lingkungan belum diisi lengkap!")
+if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID or not TARGET_CHANNEL_ID:
+    print("Error: Variabel lingkungan belum diisi lengkap! Pastikan TARGET_CHANNEL_ID sudah ditambahkan.")
     exit(1)
 
 ai_client = genai.Client(api_key=API_KEY_GEMINI)
 
-quiz_channel_id = None
 is_paused = False  
-is_triggering_c = False # GLOBAL SPAM LOCK
+is_triggering_c = False
 last_activity_time = datetime.now(timezone.utc)
 
 class MySelfBot(discord.Client):
     async def on_ready(self):
         print(f'Self-bot aktif sebagai: {self.user}')
-        print('=== ENGINE ANTI-SPAM 429 AKTIF: JEDA AMAN & LOCK GANDA ===')
+        print(f'=== KUNCI TARGET CHANNEL AKTIF: {TARGET_CHANNEL_ID} ===')
         self.loop.create_task(self.background_30s_loop())
 
     async def on_message(self, message):
-        global quiz_channel_id, is_paused, last_activity_time, is_triggering_c
+        global is_paused, last_activity_time, is_triggering_c
         
-        # --- SAKLAR REMOTE CONTROL ---
+        # --- SAKLAR REMOTE CONTROL (Bisa dilakukan dari channel mana saja) ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
@@ -157,10 +157,11 @@ class MySelfBot(discord.Client):
                 last_activity_time = datetime.now(timezone.utc)
             return
 
-        if message.author.id != TARGET_USER_ID: return
-
-        if message.content.strip() == "!c" or message.embeds:
-            quiz_channel_id = message.channel.id
+        # 🛑 FILTER ABSOLUT: Abaikan semua pesan yang bukan dari Channel Target & Bot Target
+        if message.channel.id != TARGET_CHANNEL_ID:
+            return
+        if message.author.id != TARGET_USER_ID:
+            return
 
         full_text = ""
         image_url = ""
@@ -269,18 +270,18 @@ class MySelfBot(discord.Client):
                     save_loot_history(history)
                 except: pass
 
-            if is_paused or is_triggering_c or not quiz_channel_id: return
+            if is_paused or is_triggering_c: return
 
             is_triggering_c = True
             print("[ANTI-SPAM GUARD] Menunggu jeda natural 12-22 detik sebelum !c berikutnya...")
             await asyncio.sleep(random.uniform(12.0, 22.0))
             
-            target_channel = self.get_channel(quiz_channel_id)
+            target_channel = self.get_channel(TARGET_CHANNEL_ID)
             if target_channel:
                 try:
                     await target_channel.send("!c")
                     last_activity_time = datetime.now(timezone.utc)
-                    print("[FAST TRACK SUCCESS] !c dikirim dengan aman.")
+                    print("[FAST TRACK SUCCESS] !c dikirim dengan aman ke target channel.")
                 except Exception as e:
                     print(f"[FAILED TO SEND !c] {e}")
             is_triggering_c = False
@@ -289,13 +290,13 @@ class MySelfBot(discord.Client):
     # BACKGROUND WORKER LOOP (Setiap 30 Detik)
     # =========================================================
     async def background_30s_loop(self):
-        global quiz_channel_id, is_paused, last_activity_time, is_triggering_c
+        global is_paused, last_activity_time, is_triggering_c
         await self.wait_until_ready()
         
         while not self.is_closed():
             await asyncio.sleep(30)
             
-            if is_paused or is_triggering_c or not quiz_channel_id:
+            if is_paused or is_triggering_c:
                 continue
 
             time_silent = (datetime.now(timezone.utc) - last_activity_time).total_seconds()
@@ -304,7 +305,7 @@ class MySelfBot(discord.Client):
             if time_silent >= 120.0:
                 is_triggering_c = True
                 print(f"[BACKGROUND] Sepi selama {int(time_silent)} detik. Memancing !c baru...")
-                target_channel = self.get_channel(quiz_channel_id)
+                target_channel = self.get_channel(TARGET_CHANNEL_ID)
                 if target_channel:
                     try:
                         await target_channel.send("!c")
