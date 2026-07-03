@@ -210,7 +210,6 @@ HTML_TEMPLATE = """
                 document.getElementById('start-str').innerText = data.start_str;
                 document.getElementById('uptime-str').innerText = data.uptime_str;
                 
-                // Warnai Stealth String
                 let stealthEl = document.getElementById('stealth-str');
                 stealthEl.innerText = data.stealth_str;
                 if(data.stealth_str.includes("ADMIN")) stealthEl.style.color = "#ed4245";
@@ -251,9 +250,7 @@ HTML_TEMPLATE = """
                     document.getElementById('chat-body').innerHTML = html;
                     currentChatCount = data.chats.length;
                 }
-            } catch (error) {
-                console.error("Gagal menarik data API:", error);
-            }
+            } catch (error) { console.error("Gagal menarik data API:", error); }
         }
 
         async function toggleBot() {
@@ -323,7 +320,6 @@ def get_data():
     start_str = start_time_wib.strftime('%d %B %Y %H.%M WIB')
     uptime_str = f"{hours} Hours {minutes} Minutes"
 
-    # LOGIKA STEALTH TEXT DI WEB
     time_since_admin = (now_utc - last_admin_activity).total_seconds()
     time_since_player = (now_utc - last_player_chat_time).total_seconds()
     
@@ -399,7 +395,6 @@ Thread(target=run_web_server).start()
 # 4. DICTIONARY CHEAT CODE LOGO BRAND
 # =========================================================
 LOGO_MAP = {
-    # 1 - 99
     "logo_1": "evian", "logo_3": "kraft", "logo_4": "maggi", "logo_5": "burger king",
     "logo_6": "ben and jerrys", "logo_7": "chipotle", "logo_9": "dunkin", "logo_10": "fanta",
     "logo_11": "kitkat", "logo_12": "taco bell", "logo_13": "quaker", "logo_16": "kfc",
@@ -459,31 +454,24 @@ ai_client = genai.Client(api_key=API_KEY_GEMINI)
 # 🛑 FUNGSI TYPING RANDOMIZER (HUMANIZER)
 def apply_human_typing(text):
     ans = str(text)
-    if ans.isdigit(): return ans # Jangan acak angka murni
+    if ans.isdigit(): return ans 
     
-    # 1. Acak Tanda Strip
     if '-' in ans:
         choice = random.random()
         if choice < 0.4: ans = ans.replace('-', ' ')
         elif choice < 0.8: ans = ans.replace('-', '')
         
-    # 2. Hilangkan 1 spasi (Typo buru-buru)
     if ' ' in ans and random.random() < 0.3:
         ans = ans.replace(' ', '', 1) 
         
-    # 3. Acak Besar/Kecil Huruf
     case_choice = random.random()
-    if case_choice < 0.60:
-        ans = ans.lower() # 60% chance huruf kecil
-    elif case_choice < 0.75:
-        pass # 15% biarkan asli (Title Case)
+    if case_choice < 0.60: ans = ans.lower() 
+    elif case_choice < 0.75: pass 
     elif case_choice < 0.90:
-        if len(ans) > 2: ans = ans[:2].upper() + ans[2:].lower() # Shift nyangkut
-    else:
-        ans = ans.upper() # 10% CAPSLOCK
+        if len(ans) > 2: ans = ans[:2].upper() + ans[2:].lower() 
+    else: ans = ans.upper() 
         
     return ans
-
 
 class MySelfBot(discord.Client):
     def __init__(self, *args, **kwargs):
@@ -493,11 +481,10 @@ class MySelfBot(discord.Client):
     async def on_ready(self):
         global client
         client = self
-        if self.send_lock is None:
-            self.send_lock = asyncio.Lock()
+        if self.send_lock is None: self.send_lock = asyncio.Lock()
             
         print(f'Self-bot aktif sebagai: {self.user}')
-        print(f'=== HUMAN STEALTH & AUTO-SLOWMODE AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===')
+        print(f'=== MULTI-MODE & DASHBOARD AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===')
         self.loop.create_task(self.background_30s_loop())
 
     async def trigger_manual_c(self):
@@ -510,7 +497,7 @@ class MySelfBot(discord.Client):
                     await target_channel.send("!c")
                     last_activity_time = datetime.now(timezone.utc)
                     last_send_time = datetime.now(timezone.utc)
-                except: pass
+                except Exception as e: print(f"[START ERROR] {e}")
 
     async def process_discord_event(self, message):
         global is_paused, last_activity_time, is_triggering_c, last_send_time, bot_mode
@@ -537,35 +524,27 @@ class MySelfBot(discord.Client):
                 self.loop.create_task(self.trigger_manual_c())
             return
 
-        # 🛑 Hentikan pendengaran jika pesan bukan di channel kuis
         if message.channel.id != TARGET_CHANNEL_ID: return
 
         # =========================================================
         # 🕵️ ALUR INTERCEPTOR: DETEKSI CHAT PLAYER LAIN
         # =========================================================
         is_other_player = (not message.author.bot) and (message.author.id != TARGET_USER_ID)
-        
         if is_other_player:
             if message.content and not message.content.startswith('!'):
                 wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
                 chat_history = load_json_db(CHAT_DB_FILE)
-                chat_history.insert(0, {
-                    "time": wib_time.strftime('%H:%M:%S WIB'), 
-                    "author": message.author.name, 
-                    "content": message.content
-                })
+                chat_history.insert(0, {"time": wib_time.strftime('%H:%M:%S WIB'), "author": message.author.name, "content": message.content})
                 save_json_db(CHAT_DB_FILE, chat_history)
 
                 last_player_chat_time = datetime.now(timezone.utc)
                 if bot_mode == "fast":
                     bot_mode = "slow"
                     print(f"[STEALTH ALERT] Player {message.author.name} mengetik! Bot tiarap ke SLOW MODE.")
-            return # Selesai, jangan respon chat mereka
+            return 
         
-        # Loloskan hanya pesan LionNSEX atau User Target
         if message.author.bot == False and message.author.id != TARGET_USER_ID: return
 
-        # Abaikan pesan masa lalu
         try:
             msg_date = message.created_at
             if msg_date.tzinfo is None: msg_date = msg_date.replace(tzinfo=timezone.utc)
@@ -575,7 +554,7 @@ class MySelfBot(discord.Client):
         last_activity_time = datetime.now(timezone.utc)
 
         full_text = ""
-        image_url = ""
+        image_urls = []
 
         if message.embeds:
             for embed in message.embeds:
@@ -584,10 +563,28 @@ class MySelfBot(discord.Client):
                 if embed.fields:
                     for field in embed.fields: full_text += f"{field.name}: {field.value}\n"
                 if embed.footer and embed.footer.text: full_text += embed.footer.text + "\n"
-                if embed.image and embed.image.url: image_url = embed.image.url
+                
+                # Jaga-jaga Discord mengubah letak gambar ke Thumbnail
+                if embed.image and embed.image.url: image_urls.append(embed.image.url)
+                if embed.thumbnail and embed.thumbnail.url: image_urls.append(embed.thumbnail.url)
 
         if message.content: full_text += "\n" + message.content
         content_lower = full_text.lower()
+
+        # =========================================================
+        # ALUR 0: DETEKSI COOLDOWN LIONNSEX (Self-Healing)
+        # =========================================================
+        if "please wait" in content_lower and "before starting another challenge" in content_lower:
+            match = re.search(r'wait (\d+)s', content_lower)
+            wait_s = int(match.group(1)) if match else 5
+            print(f"[WARNING LION] Kena cooldown dari LionNSEX! Auto-retry dalam {wait_s + 1} detik...")
+            
+            async def retry_c(delay):
+                await asyncio.sleep(delay + 1.0)
+                await self.trigger_manual_c()
+            
+            self.loop.create_task(retry_c(wait_s))
+            return
 
         # =========================================================
         # ALUR 1: DETEKSI KUIS SELESAI
@@ -597,8 +594,6 @@ class MySelfBot(discord.Client):
         if is_quiz_ended:
             if message.id == last_solved_msg_id: return 
             last_solved_msg_id = message.id
-            
-            # Catat waktu persis kapan kuis ini selesai untuk fitur Pura-Pura Kesalip
             quiz_solved_time = datetime.now(timezone.utc) 
 
             if "msdn" in content_lower:
@@ -607,8 +602,7 @@ class MySelfBot(discord.Client):
                     rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                     str_answer = ans_match.group(1).strip().replace('**', '') if ans_match else "Tidak terdeteksi"
                     str_reward = rew_match.group(1).strip().replace('**', '') if rew_match else "Tidak terdeteksi"
-                    if "sent to your main" in str_reward.lower():
-                        str_reward = str_reward.split("Sent to your")[0].strip()
+                    if "sent to your main" in str_reward.lower(): str_reward = str_reward.split("Sent to your")[0].strip()
 
                     wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
                     history = load_json_db(DB_FILE)
@@ -629,16 +623,11 @@ class MySelfBot(discord.Client):
             
             try:
                 async with self.send_lock:
-                    time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                    
+                    # KITA WAJIB MENUNGGU MUTLAK DARI SAAT SOAL DITUTUP
                     if bot_mode == "slow":
-                        required_wait = random.uniform(7.0, 12.0) 
+                        await asyncio.sleep(random.uniform(7.0, 12.0))
                     else:
-                        required_wait = random.uniform(5.6, 6.5)
-                    
-                    if time_since_last_send < required_wait:
-                        wait_time = required_wait - time_since_last_send
-                        await asyncio.sleep(wait_time)
+                        await asyncio.sleep(random.uniform(5.5, 6.5))
                     
                     target_channel = self.get_channel(TARGET_CHANNEL_ID)
                     if target_channel:
@@ -657,7 +646,6 @@ class MySelfBot(discord.Client):
         if "60 seconds" in content_lower or "!char" in content_lower:
             if message.id == last_answered_msg_id: return 
             last_answered_msg_id = message.id
-
             if is_paused: return
 
             final_answer = ""
@@ -681,19 +669,23 @@ class MySelfBot(discord.Client):
                             success = True
                 except: pass
 
-            if not success and image_url:
+            if not success and image_urls:
                 try:
-                    if "challenge/flags/flag_" in image_url:
-                        match = re.search(r'flag_([^.]+)\.png', image_url)
-                        if match: final_answer = match.group(1).replace('_', ' ').title(); success = True
-                    elif "challenge/animals/animal_" in image_url:
-                        match = re.search(r'animal_([^.]+)\.jpg', image_url)
-                        if match: final_answer = match.group(1).replace('_', ' ').title(); success = True
-                    elif "challenge/logos/logo_" in image_url:
-                        match = re.search(r'(logo_\d+)\.png', image_url)
-                        if match:
-                            logo_key = match.group(1)
-                            if logo_key in LOGO_MAP: final_answer = LOGO_MAP[logo_key].replace('_', ' ').title(); success = True
+                    for img_url in image_urls:
+                        if "flag_" in img_url:
+                            match = re.search(r'flag_([^.\?]+)', img_url)
+                            if match: final_answer = match.group(1).replace('_', ' ').title(); success = True; break
+                        elif "animal_" in img_url:
+                            match = re.search(r'animal_([^.\?]+)', img_url)
+                            if match: final_answer = match.group(1).replace('_', ' ').title(); success = True; break
+                        elif "logo_" in img_url:
+                            match = re.search(r'(logo_\d+)', img_url)
+                            if match:
+                                logo_key = match.group(1)
+                                if logo_key in LOGO_MAP: 
+                                    final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
+                                    success = True
+                                    break
                 except: pass
 
             if not success:
@@ -723,12 +715,11 @@ class MySelfBot(discord.Client):
                     # 🛑 FITUR KESALIP: Cek jika kuis sudah diakhiri saat bot sedang menunggu delay di atas
                     time_since_solved = (datetime.now(timezone.utc) - quiz_solved_time).total_seconds()
                     if time_since_solved < 20.0:
-                        # Kuis baru aja selesai di bawah 20 detik yang lalu (berarti kita keduluan orang)
-                        if random.random() < 0.25: # 25% Peluang pura-pura tetap ngirim jawaban
+                        if random.random() < 0.25:
                             print(f"[HUMANIZER] Kesalip! Tetap kirim '{final_answer}' (pura-pura telat ngetik).")
                         else:
                             print(f"[HUMANIZER] Kesalip! Membatalkan pengiriman '{final_answer}' karena sudah ada pemenang.")
-                            return # Batal kirim, jangan spam!
+                            return
                     
                     try:
                         await message.channel.send(final_answer)
@@ -751,7 +742,6 @@ class MySelfBot(discord.Client):
         while not self.is_closed():
             await asyncio.sleep(30)
             
-            # 🕵️ CEK AUTO-STEALTH: Mengembalikan FAST MODE setelah aman
             time_since_admin = (datetime.now(timezone.utc) - last_admin_activity).total_seconds()
             time_since_player = (datetime.now(timezone.utc) - last_player_chat_time).total_seconds()
             
