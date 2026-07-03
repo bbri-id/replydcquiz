@@ -4,367 +4,88 @@ import random
 import os
 import re
 import json
-import logging
 from google import genai
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string
 from threading import Thread
 from datetime import datetime, timedelta, timezone
 
 # =========================================================
-# 1. VARIABEL GLOBAL (STATE, TIMERS, MODE & MEMORY)
-# =========================================================
-START_TIME_UTC = datetime.now(timezone.utc)
-last_activity_time = datetime.now(timezone.utc)
-last_send_time = datetime.now(timezone.utc)
-
-# Memory Stealth Mode
-last_player_chat_time = datetime.now(timezone.utc) - timedelta(minutes=10) 
-last_admin_activity = datetime.now(timezone.utc) - timedelta(minutes=65) 
-quiz_solved_time = datetime.now(timezone.utc) - timedelta(minutes=10)
-
-is_paused = False  
-is_triggering_c = False
-quiz_channel_id = None
-client = None  
-
-bot_mode = "fast" # Pilihan: "fast", "slow", "barbar"
-rate_limit_count = 0
-
-last_answered_msg_id = None
-last_solved_msg_id = None
-
-# =========================================================
-# 2. PENCEGAT LOG UNTUK MENGHITUNG RATE LIMIT (429)
-# =========================================================
-class RateLimitHandler(logging.Handler):
-    def emit(self, record):
-        global rate_limit_count
-        if record.levelno >= logging.WARNING:
-            msg = self.format(record).lower()
-            if "rate limited" in msg or "429" in msg:
-                rate_limit_count += 1
-
-rl_handler = RateLimitHandler()
-logging.getLogger('discord.http').addHandler(rl_handler)
-logging.basicConfig(level=logging.INFO)
-
-# =========================================================
-# 3. SETUP WEB SERVER MINI, REKAPAN HADIAH, & DASHBOARD
+# 1. SETUP WEB SERVER MINI, REKAPAN HADIAH, & STATS DASHBOARD
 # =========================================================
 app = Flask('')
 DB_FILE = "loot_history.json"
-CHAT_DB_FILE = "chat_history.json"
 
-def load_json_db(file_name):
-    if os.path.exists(file_name):
+# Rekam waktu saat skrip/server pertama kali dijalankan
+START_TIME_UTC = datetime.now(timezone.utc)
+
+def load_loot_history():
+    if os.path.exists(DB_FILE):
         try:
-            with open(file_name, "r") as f: return json.load(f)
+            with open(DB_FILE, "r") as f: return json.load(f)
         except: return []
     return []
 
-def save_json_db(file_name, data):
+def save_loot_history(data):
     try:
-        with open(file_name, "w") as f: json.dump(data[:50], f, indent=4)
+        with open(DB_FILE, "w") as f: json.dump(data, f, indent=4)
     except Exception as e: print(f"[ERROR DB] {e}")
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Loot Kuis Dashboard</title>
+    <title>Loot Kuis Logger</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        /* BASE DESKTOP STYLE */
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background-color: #1e1e24; color: #fff; margin: 0; padding: 20px; 
-            height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden;
-        }
-        h2 { 
-            color: #5865F2; border-bottom: 2px solid #5865F2; padding-bottom: 10px; margin-top: 0;
-            display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 1.5em;
-        }
-        
-        .stats-box { 
-            background-color: #2f3136; padding: 15px; border-radius: 8px; 
-            margin-bottom: 15px; border-left: 4px solid #43b581; flex-shrink: 0;
-        }
-        .stats-info p { margin: 5px 0; font-size: 0.95em; color: #dcddde; }
-        .stats-info strong { color: #fff; }
-        
-        .stats-grid { 
-            display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); 
-            gap: 10px; margin-top: 15px; 
-        }
-        .stat-item { 
-            background: #202225; padding: 10px; border-radius: 5px; 
-            text-align: center; font-size: 0.9em; color: #b9bbbe; 
-        }
-        .stat-item span { display: block; font-size: 1.4em; font-weight: bold; color: #faa61a; margin-top: 5px; }
-
-        .control-panel { 
-            margin-top: 15px; padding-top: 15px; border-top: 1px solid #4f545c; 
-            display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
-        }
-        .control-info { display: flex; flex-direction: column; gap: 5px; font-size: 0.9em; }
-        .status-badge { font-weight: bold; padding: 3px 8px; border-radius: 5px; background-color: #202225; }
-        
-        .btn-wrapper { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;}
-        .btn { border: none; padding: 10px 15px; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9em; }
-        
-        .btn-start { background-color: #43b581; color: white; }
-        .btn-start:hover { background-color: #3ca374; }
-        .btn-pause { background-color: #ed4245; color: white; }
-        .btn-pause:hover { background-color: #d83c3e; }
-        
-        .btn-mode { background-color: #5865F2; color: white; }
-        .btn-mode:hover { background-color: #4752c4; }
-        
-        .btn-barbar { background-color: #ff4757; color: white; box-shadow: 0 0 10px #ff4757; animation: pulse 2s infinite; }
-        .btn-barbar:hover { background-color: #ff6b81; }
-        
-        @keyframes pulse {
-            0% { box-shadow: 0 0 5px #ff4757; }
-            50% { box-shadow: 0 0 15px #ff4757; }
-            100% { box-shadow: 0 0 5px #ff4757; }
-        }
-
-        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
-        .tables-wrapper {
-            display: grid; grid-template-columns: 2fr 1fr; gap: 15px; flex-grow: 1; min-height: 0;
-        }
-
-        .table-container { 
-            overflow-y: auto; background-color: #2f3136; border-radius: 8px; position: relative; 
-            border: 1px solid #202225;
-        }
-        .table-header {
-            position: sticky; top: 0; z-index: 2; padding: 12px; margin: 0;
-            text-align: center; color: white; font-weight: bold; font-size: 1.1em;
-            box-shadow: 0 2px 2px -1px rgba(0,0,0,0.4);
-        }
-        .reward-header { background-color: #5865F2; }
-        .chat-header { background-color: #faa61a; color: #1e1e24; }
-
-        table { width: 100%; border-collapse: collapse; }
-        tbody td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; font-size: 0.9em; word-wrap: break-word; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e24; color: #fff; margin: 20px; }
+        h2 { color: #5865F2; border-bottom: 2px solid #5865F2; padding-bottom: 10px; }
+        .stats-box { background-color: #2f3136; padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #43b581; }
+        .stats-box p { margin: 5px 0; font-size: 0.95em; color: #dcddde; }
+        .stats-box strong { color: #fff; }
+        .highlight-xp { color: #faa61a; font-weight: bold; font-size: 1.1em; }
+        .table-container { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; background-color: #2f3136; border-radius: 8px; overflow: hidden; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; }
+        th { background-color: #5865F2; color: white; }
         tr:hover { background-color: #35383e; }
+        .timestamp { color: #b9bbbe; font-size: 0.85em; }
         .reward { color: #43b581; font-weight: bold; }
-        .chat-author { color: #5865F2; font-weight: bold; display: block; margin-bottom: 2px;}
-        
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #202225; border-radius: 8px; }
-        ::-webkit-scrollbar-thumb { background: #4f545c; border-radius: 8px; }
-        ::-webkit-scrollbar-thumb:hover { background: #72767d; }
-
-        /* 📱 RESPONSIVE MOBILE FIX */
-        @media (max-width: 768px) {
-            body { height: auto; overflow-y: auto; padding: 10px; }
-            .stats-grid { grid-template-columns: repeat(2, 1fr); }
-            .stat-item { padding: 8px; font-size: 0.8em; }
-            .stat-item span { font-size: 1.2em; }
-            
-            .control-panel { flex-direction: column; align-items: stretch; }
-            .btn-wrapper { width: 100%; margin-top: 10px; justify-content: space-between; }
-            .btn { flex: 1 1 45%; padding: 12px 5px; font-size: 0.85em; text-align: center; } 
-            #barbar-btn { flex: 1 1 100%; margin-top: 5px; font-size: 1em; } /* Tombol Barbar Penuh di HP */
-            
-            .tables-wrapper { display: flex; flex-direction: column; gap: 15px; }
-            .table-container { height: 380px; }
-            tbody td { padding: 8px; font-size: 0.85em; }
-            .table-header { font-size: 1em; padding: 10px; }
-        }
     </style>
 </head>
 <body>
-    <h2>🏆 Rekapan Hadiah Kuis</h2>
+    <h2>🏆 Rekapan Hadiah Kuis (User: msdn)</h2>
     
     <div class="stats-box">
-        <div class="stats-info">
-            <p>🟢 <strong>Server Up since:</strong> <span id="start-str">Loading...</span></p>
-            <p>⏱️ <strong>Bot running:</strong> <span id="uptime-str">Loading...</span></p>
-            <p>👤 <strong>Stealth Tracker:</strong> <span id="stealth-str" style="font-weight:bold;">Aman</span></p>
-        </div>
-        
-        <div class="stats-grid">
-            <div class="stat-item">XP Gained<span id="val-xp">0 %</span></div>
-            <div class="stat-item">Gold Gained<span id="val-gold">0</span></div>
-            <div class="stat-item">Token Gained<span id="val-token">0</span></div>
-            <div class="stat-item">TP Gained<span id="val-tp">0</span></div>
-            <div class="stat-item">Rare Reward<span id="val-rare">0x</span></div>
-        </div>
-
-        <div class="control-panel">
-            <div class="control-info">
-                <div>🤖 <strong>Status:</strong> <span id="status-badge" class="status-badge">Loading...</span></div>
-                <div>⚡ <strong>Speed:</strong> <span id="mode-badge" class="status-badge">Loading...</span></div>
-                <div>⚠️ <strong>Rate Limits Hit:</strong> <span id="rl-badge" class="status-badge" style="color:#ed4245;">0</span></div>
-            </div>
-            <div class="btn-wrapper">
-                <button id="toggle-mode-btn" class="btn btn-mode" onclick="toggleMode()">⚙️ CHANGE MODE</button>
-                <button id="toggle-btn" class="btn" onclick="toggleBot()">⏳ Loading</button>
-                <button id="barbar-btn" class="btn btn-barbar" onclick="toggleBarbar()">🔥 BARBAR</button>
-            </div>
-        </div>
+        <p>🟢 <strong>Server Up since:</strong> {{ start_str }}</p>
+        <p>⏱️ <strong>Bot running:</strong> {{ uptime_str }}</p>
+        <p>✨ <strong>XP Gained (This Session):</strong> <span class="highlight-xp">{{ total_xp }} %</span></p>
     </div>
 
-    <div class="tables-wrapper">
-        <div class="table-container">
-            <div class="table-header reward-header">🎁 Reward Log</div>
-            <table>
-                <tbody id="table-body">
-                    <tr><td colspan="3" style="text-align:center; padding:20px; color:#72767d;">Memuat data real-time...</td></tr>
-                </tbody>
-            </table>
-        </div>
-
-        <div class="table-container">
-            <div class="table-header chat-header">💬 Player Chat Interceptor</div>
-            <table>
-                <tbody id="chat-body">
-                    <tr><td style="text-align:center; padding:20px; color:#72767d;">Menunggu chat player...</td></tr>
-                </tbody>
-            </table>
-        </div>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr><th>Waktu (WIB)</th><th>Jawaban</th><th>Hadiah / Reward</th></tr>
+            </thead>
+            <tbody>
+                {% if loots %}
+                    {% for loot in loots %}
+                    <tr><td>{{ loot.time }}</td><td><code>{{ loot.answer }}</code></td><td class="reward">{{ loot.reward }}</td></tr>
+                    {% endfor %}
+                {% else %}
+                    <tr><td colspan="3" style="text-align:center; padding:20px; color:#72767d;">Belum ada hadiah ter-log. Pantau Live Log Render!</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
     </div>
-
-    <script>
-        let currentLootCount = -1; 
-        let currentChatCount = -1;
-
-        async function fetchAllData() {
-            try {
-                // Penambahan Cache-Busting (Tanggal/Waktu Unik) agar HP dipaksa ambil data terbaru
-                let res = await fetch('/api/data?_=' + new Date().getTime());
-                let data = await res.json();
-                
-                document.getElementById('start-str').innerText = data.start_str;
-                document.getElementById('uptime-str').innerText = data.uptime_str;
-                
-                let stealthEl = document.getElementById('stealth-str');
-                stealthEl.innerText = data.stealth_str;
-                if(data.stealth_str.includes("ADMIN") || data.stealth_str.includes("OFF")) stealthEl.style.color = "#ed4245";
-                else if(data.stealth_str.includes("Player")) stealthEl.style.color = "#faa61a";
-                else stealthEl.style.color = "#43b581";
-                
-                document.getElementById('val-xp').innerText = data.total_xp + " %";
-                document.getElementById('val-gold').innerText = data.total_gold;
-                document.getElementById('val-token').innerText = data.total_token;
-                document.getElementById('val-tp').innerText = data.total_tp;
-                document.getElementById('val-rare').innerText = data.rare_count + "x";
-                document.getElementById('rl-badge').innerText = data.rate_limit_count;
-
-                updateUI(data.paused, data.mode);
-                
-                if (data.loots.length !== currentLootCount) {
-                    let html = "";
-                    if (data.loots.length === 0) {
-                        html = "<tr><td colspan='3' style='text-align:center; color:#72767d; padding:20px;'>Belum ada hadiah ter-log.</td></tr>";
-                    } else {
-                        data.loots.forEach(loot => {
-                            html += `<tr><td style="width:25%">${loot.time}</td><td style="width:35%"><code>${loot.answer}</code></td><td class="reward">${loot.reward}</td></tr>`;
-                        });
-                    }
-                    document.getElementById('table-body').innerHTML = html;
-                    currentLootCount = data.loots.length;
-                }
-
-                if (data.chats.length !== currentChatCount) {
-                    let html = "";
-                    if (data.chats.length === 0) {
-                        html = "<tr><td style='text-align:center; color:#72767d; padding:20px;'>Room sepi. Belum ada chat player.</td></tr>";
-                    } else {
-                        data.chats.forEach(chat => {
-                            html += `<tr><td><span class="chat-author">${chat.author}</span>${chat.content} <br><span style="font-size:0.8em; color:#72767d;">${chat.time}</span></td></tr>`;
-                        });
-                    }
-                    document.getElementById('chat-body').innerHTML = html;
-                    currentChatCount = data.chats.length;
-                }
-            } catch (error) { console.error("Gagal menarik data API:", error); }
-        }
-
-        async function toggleBot() {
-            let btn = document.getElementById('toggle-btn');
-            btn.disabled = true;
-            try {
-                let res = await fetch('/api/toggle', { method: 'POST' });
-                let data = await res.json();
-                updateUI(data.paused, data.mode);
-            } catch (error) { alert("Gagal menghubungi server!"); }
-            btn.disabled = false;
-        }
-
-        async function toggleMode() {
-            let btn = document.getElementById('toggle-mode-btn');
-            btn.disabled = true;
-            try {
-                let res = await fetch('/api/toggle_mode', { method: 'POST' });
-                let data = await res.json();
-                updateUI(data.paused, data.mode);
-            } catch (error) { alert("Gagal mengubah mode!"); }
-            btn.disabled = false;
-        }
-
-        async function toggleBarbar() {
-            let btn = document.getElementById('barbar-btn');
-            btn.disabled = true;
-            try {
-                let res = await fetch('/api/toggle_barbar', { method: 'POST' });
-                let data = await res.json();
-                updateUI(data.paused, data.mode);
-            } catch (error) { alert("Gagal mengubah mode!"); }
-            btn.disabled = false;
-        }
-
-        function updateUI(isPaused, botMode) {
-            let badgeStatus = document.getElementById('status-badge');
-            let badgeMode = document.getElementById('mode-badge');
-            let btn = document.getElementById('toggle-btn');
-            
-            if (isPaused) {
-                badgeStatus.innerHTML = "😴 PAUSED"; badgeStatus.style.color = "#ed4245";
-                btn.className = "btn btn-start"; btn.innerHTML = "▶️ START BOT";
-            } else {
-                badgeStatus.innerHTML = "🚀 RUNNING"; badgeStatus.style.color = "#43b581";
-                btn.className = "btn btn-pause"; btn.innerHTML = "⏸️ PAUSE BOT";
-            }
-
-            if (botMode === "barbar") {
-                badgeMode.innerHTML = "🔥 BARBAR (No Rules!)"; badgeMode.style.color = "#ff4757";
-            } else if (botMode === "fast") {
-                badgeMode.innerHTML = "🏎️ FAST MODE"; badgeMode.style.color = "#faa61a";
-            } else {
-                badgeMode.innerHTML = "🐢 SLOW MODE (Stealth/Manual)"; badgeMode.style.color = "#b9bbbe";
-            }
-        }
-
-        // Tembak Data Pertama Kali
-        fetchAllData();
-        // Polling setiap 3 detik
-        setInterval(fetchAllData, 3000); 
-
-        // 📱 VISIBILITY LISTENER: Jika HP baru nyala / tab baru dibuka, paksa sinkron!
-        document.addEventListener("visibilitychange", function() {
-            if (!document.hidden) {
-                fetchAllData();
-            }
-        });
-    </script>
 </body>
 </html>
 """
 
 @app.route('/')
 def home():
-    return render_template_string(HTML_TEMPLATE)
-
-@app.route('/api/data', methods=['GET'])
-def get_data():
-    loots = load_json_db(DB_FILE)
-    chats = load_json_db(CHAT_DB_FILE)
+    loots = load_loot_history()
     
+    # 1. Hitung Uptime
     now_utc = datetime.now(timezone.utc)
     uptime_delta = now_utc - START_TIME_UTC
     hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
@@ -373,82 +94,28 @@ def get_data():
     start_time_wib = START_TIME_UTC + timedelta(hours=7)
     start_str = start_time_wib.strftime('%d %B %Y %H.%M WIB')
     uptime_str = f"{hours} Hours {minutes} Minutes"
-
-    time_since_admin = (now_utc - last_admin_activity).total_seconds()
-    time_since_player = (now_utc - last_player_chat_time).total_seconds()
     
-    if bot_mode == "barbar":
-        stealth_str = "🔥 MODE BARBAR (Stealth OFF)"
-    elif time_since_admin < 3600.0:
-        stealth_str = f"🚨 ADMIN ONLINE! Tiarap {int((3600 - time_since_admin)/60)} Menit."
-    elif time_since_player < 300.0:
-        stealth_str = f"⚠️ Ada Player! Tiarap {int(300 - time_since_player)} Detik."
-    else:
-        stealth_str = "🟢 Aman (Sepi)"
-    
-    total_xp = total_gold = total_token = total_tp = rare_count = 0
-    start_time_naive = start_time_wib.replace(tzinfo=None) 
+    # 2. Hitung Total XP khusus di sesi server saat ini
+    total_xp = 0
+    start_time_naive = start_time_wib.replace(tzinfo=None) # Hilangkan timezone info untuk komparasi dengan string JSON
     
     for loot in loots:
         try:
             loot_time = datetime.strptime(loot["time"], '%Y-%m-%d %H:%M:%S')
+            # Hanya hitung loot yang didapat setelah server ini menyala
             if loot_time >= start_time_naive:
-                rew = loot["reward"].lower()
-                def extract_val(pattern):
-                    m = re.search(pattern, rew)
-                    if m:
-                        clean_str = m.group(1).replace(',', '').replace('.', '')
-                        return int(clean_str)
-                    return 0
-                
-                total_xp += extract_val(r'([\d,\.]+)\s*(?:%|xp)')
-                total_gold += extract_val(r'([\d,\.]+)\s*gold')
-                total_token += extract_val(r'([\d,\.]+)\s*token')
-                total_tp += extract_val(r'([\d,\.]+)\s*tp')
-                if "rare" in rew: rare_count += 1
-        except: pass
-
-    return jsonify({
-        "start_str": start_str,
-        "uptime_str": uptime_str,
-        "stealth_str": stealth_str,
-        "total_xp": total_xp,
-        "total_gold": total_gold,
-        "total_token": total_token,
-        "total_tp": total_tp,
-        "rare_count": rare_count,
-        "loots": loots,
-        "chats": chats,
-        "paused": is_paused,
-        "mode": bot_mode,
-        "rate_limit_count": rate_limit_count
-    })
-
-@app.route('/api/toggle', methods=['POST'])
-def toggle_state():
-    global is_paused, last_activity_time, client
-    is_paused = not is_paused
-    if not is_paused:
-        last_activity_time = datetime.now(timezone.utc)
-        if client and client.loop and client.is_ready():
-            try: asyncio.run_coroutine_threadsafe(client.trigger_manual_c(), client.loop)
-            except: pass
-    return jsonify({"paused": is_paused, "mode": bot_mode})
-
-@app.route('/api/toggle_mode', methods=['POST'])
-def toggle_mode():
-    global bot_mode
-    # Tombol biasa hanya switch antara fast dan slow
-    bot_mode = "slow" if bot_mode == "fast" else "fast"
-    return jsonify({"paused": is_paused, "mode": bot_mode})
-
-@app.route('/api/toggle_barbar', methods=['POST'])
-def toggle_barbar():
-    global bot_mode
-    # Tombol Barbar: Kalau dipencet jadi barbar, dipencet lagi kembali normal ke fast
-    bot_mode = "fast" if bot_mode == "barbar" else "barbar"
-    print(f"[WEB CONTROL] 🔥 Mode Barbar: {bot_mode.upper()}")
-    return jsonify({"paused": is_paused, "mode": bot_mode})
+                # Ekstrak angka yang menempel dengan "%" atau "XP" (Contoh: "15%", "15 XP", "15% XP")
+                match = re.search(r'(\d+)\s*(?:%|xp)', loot["reward"], re.IGNORECASE)
+                if match:
+                    total_xp += int(match.group(1))
+        except:
+            pass
+            
+    return render_template_string(HTML_TEMPLATE, 
+                                  loots=loots, 
+                                  start_str=start_str, 
+                                  uptime_str=uptime_str,
+                                  total_xp=total_xp)
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -457,9 +124,10 @@ def run_web_server():
 Thread(target=run_web_server).start()
 
 # =========================================================
-# 4. DICTIONARY CHEAT CODE LOGO BRAND
+# 2. DICTIONARY CHEAT CODE LOGO BRAND
 # =========================================================
 LOGO_MAP = {
+    # 1 - 99
     "logo_1": "evian", "logo_3": "kraft", "logo_4": "maggi", "logo_5": "burger king",
     "logo_6": "ben and jerrys", "logo_7": "chipotle", "logo_9": "dunkin", "logo_10": "fanta",
     "logo_11": "kitkat", "logo_12": "taco bell", "logo_13": "quaker", "logo_16": "kfc",
@@ -469,11 +137,15 @@ LOGO_MAP = {
     "logo_37": "monster", "logo_38": "pizza hut", "logo_39": "android", "logo_40": "adobe",
     "logo_41": "chrome", "logo_42": "gmail", "logo_44": "twitter", "logo_45": "starbucks",
     "logo_46": "xbox",
+
+    # 100 - 199
     "logo_101": "chanel", "logo_107": "champion", "logo_108": "lv", "logo_110": "levis",
     "logo_111": "rolex", "logo_112": "dickies", "logo_114": "columbia", "logo_116": "hermes",
     "logo_117": "palace", "logo_118": "kappa", "logo_119": "burberry", "logo_120": "puma",
     "logo_121": "reebok", "logo_125": "diesel", "logo_126": "fila", "logo_127": "versace",
     "logo_129": "hollister", "logo_133": "nike", "logo_136": "ck", "logo_138": "fred perry",
+
+    # 200 - 299
     "logo_201": "apple", "logo_202": "dolby", "logo_203": "philips", "logo_204": "alibaba",
     "logo_206": "cisco", "logo_207": "intel", "logo_208": "adobe", "logo_209": "alcatel",
     "logo_210": "amazon", "logo_211": "amd", "logo_212": "asus", "logo_214": "dell",
@@ -483,6 +155,8 @@ LOGO_MAP = {
     "logo_228": "seagate", "logo_229": "ericsson", "logo_230": "beats", "logo_231": "xiaomi",
     "logo_232": "uber", "logo_233": "youtube", "logo_234": "twitter", "logo_235": "Blackberry",
     "logo_236": "dropbox", "logo_237": "facebook", "logo_238": "google", "logo_239": "snapchat",
+
+    # 300 - 399
     "logo_301": "netflix", "logo_302": "nintendo", "logo_303": "universal", "logo_304": "walking dead",
     "logo_305": "gameloft", "logo_306": "game of thrones", "logo_307": "discovery", "logo_308": "monopoly",
     "logo_309": "konami", "logo_311": "bandai", "logo_313": "warner bros", "logo_314": "rockstar",
@@ -491,6 +165,8 @@ LOGO_MAP = {
     "logo_329": "sega", "logo_330": "star wars", "logo_331": "tencent", "logo_332": "terminator",
     "logo_333": "tiktok", "logo_334": "titanic", "logo_335": "soundcloud", "logo_336": "ubisoft",
     "logo_337": "lego", "logo_338": "discord", "logo_339": "spotify",
+
+    # 400 - 499
     "logo_402": "cadillac", "logo_403": "chevrolet", "logo_404": "mini", "logo_405": "porsche",
     "logo_406": "citroen", "logo_408": "infiniti", "logo_409": "jaguar", "logo_410": "volkswagen",
     "logo_411": "lexus", "logo_412": "peugeot", "logo_413": "mitsubishi", "logo_414": "suzuki",
@@ -499,11 +175,13 @@ LOGO_MAP = {
     "logo_424": "honda", "logo_425": "hyundai", "logo_426": "koenigsegg", "logo_430": "mazda",
     "logo_431": "nissan", "logo_432": "opel", "logo_433": "renault", "logo_435": "seat",
     "logo_437": "subaru", "logo_438": "volvo", "logo_439": "bmw",
+
+    # 500+
     "logo_501": "harley", "logo_502": "nescafe"
 }
 
 # =========================================================
-# 5. CORE CODE SELF-BOT DISCORD & GEMINI CONFIG
+# 3. CORE CODE SELF-BOT DISCORD & GEMINI CONFIG
 # =========================================================
 TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
 API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
@@ -516,72 +194,210 @@ if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID or not TARGET_C
 
 ai_client = genai.Client(api_key=API_KEY_GEMINI)
 
-# 🛑 FUNGSI TYPING RANDOMIZER (HUMANIZER)
-def apply_human_typing(text):
-    ans = str(text)
-    if ans.isdigit(): return ans 
-    
-    if '-' in ans:
-        choice = random.random()
-        if choice < 0.4: ans = ans.replace('-', ' ')
-        elif choice < 0.8: ans = ans.replace('-', '')
-        
-    if ' ' in ans and random.random() < 0.3:
-        ans = ans.replace(' ', '', 1) 
-        
-    case_choice = random.random()
-    if case_choice < 0.60: ans = ans.lower() 
-    elif case_choice < 0.75: pass 
-    elif case_choice < 0.90:
-        if len(ans) > 2: ans = ans[:2].upper() + ans[2:].lower() 
-    else: ans = ans.upper() 
-        
-    return ans
+is_paused = False  
+is_triggering_c = False
+last_activity_time = datetime.now(timezone.utc)
+last_send_time = datetime.now(timezone.utc)
 
 class MySelfBot(discord.Client):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.send_lock = None
-
     async def on_ready(self):
-        global client
-        client = self
-        if self.send_lock is None: self.send_lock = asyncio.Lock()
-            
         print(f'Self-bot aktif sebagai: {self.user}')
-        print(f'=== MULTI-MODE & DASHBOARD AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===')
+        print(f'=== ANTI-SLOWMODE (5s) AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===')
         self.loop.create_task(self.background_30s_loop())
 
-    async def trigger_manual_c(self):
-        global last_activity_time, last_send_time
-        if not self.is_ready() or is_paused: return
-        async with self.send_lock:
-            target_channel = self.get_channel(TARGET_CHANNEL_ID)
-            if target_channel:
-                try:
-                    await target_channel.send("!c")
-                    last_activity_time = datetime.now(timezone.utc)
-                    last_send_time = datetime.now(timezone.utc)
-                except Exception as e: print(f"[START ERROR] {e}")
-
-    async def process_discord_event(self, message):
-        global is_paused, last_activity_time, is_triggering_c, last_send_time, bot_mode
-        global last_answered_msg_id, last_solved_msg_id, last_player_chat_time
-        global quiz_solved_time, last_admin_activity
+    async def on_message(self, message):
+        global is_paused, last_activity_time, is_triggering_c, last_send_time
         
-        # 🕵️ RADAR ADMIN
-        author_name = message.author.name.lower()
-        author_display = message.author.display_name.lower()
-        if any(admin in author_name or admin in author_display for admin in ["ternate", "pandansex"]):
-            last_admin_activity = datetime.now(timezone.utc)
-            if bot_mode == "fast":
-                bot_mode = "slow"
-                print(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 60 Menit.")
-            elif bot_mode == "barbar":
-                print(f"[🔥 BARBAR] Mengabaikan aktivitas Admin {message.author.name}!")
-
+        # --- SAKLAR REMOTE CONTROL ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
                 is_paused = True
+                print("[REMOTE CONTROL] Terdeteksi 'rame'. Bot memasuki mode PAUSE.")
             elif "capek" in msg_lower and is_paused:
+                is_paused = False
+                print("[REMOTE CONTROL] Terdeteksi 'capek'. Bot AKTIF kembali.")
+                last_activity_time = datetime.now(timezone.utc)
+            return
+
+        # 🛑 FILTER ABSOLUT: Hanya dengarkan pesan di TARGET_CHANNEL_ID dari LionNSEX
+        if message.channel.id != TARGET_CHANNEL_ID: return
+        if message.author.id != TARGET_USER_ID: return
+
+        # Reset global timer tiap ada aktivitas di channel target
+        last_activity_time = datetime.now(timezone.utc)
+
+        full_text = ""
+        image_url = ""
+
+        if message.embeds:
+            for embed in message.embeds:
+                if embed.title: full_text += embed.title + "\n"
+                if embed.description: full_text += embed.description + "\n"
+                if embed.fields:
+                    for field in embed.fields: full_text += f"{field.name}: {field.value}\n"
+                if embed.footer and embed.footer.text: full_text += embed.footer.text + "\n"
+                if embed.image and embed.image.url: image_url = embed.image.url
+
+        if message.content:
+            full_text += "\n" + message.content
+
+        content_lower = full_text.lower()
+
+        # =========================================================
+        # ALUR 1: MENJAWAB SOAL BARU
+        # =========================================================
+        if "60 seconds" in content_lower or "!char" in content_lower:
+            if is_paused: return
+
+            print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
+            final_answer = ""
+            success = False
+
+            if "math" in content_lower:
+                try:
+                    lines = [l.strip() for l in full_text.split('\n') if l.strip()]
+                    target_line = ""
+                    for line in lines:
+                        if line.startswith("##") or ('=' in line and '?' in line):
+                            target_line = line
+                            break
+                    
+                    if target_line:
+                        expr = target_line.replace('##', '').split('=')[0].strip()
+                        expr_clean = expr.replace('×', '*').replace('x', '*').replace('X', '*')
+                        expr_clean = expr_clean.replace('²', '**2').replace('^2', '**2')
+                        expr_purified = "".join(re.findall(r'[\d\+\-\*\/\(\)\s]+', expr_clean)).strip()
+                        
+                        if expr_purified:
+                            hasil_lokal = eval(expr_purified)
+                            final_answer = str(int(round(hasil_lokal)))
+                            success = True
+                            print(f"[MATH LOCAL] Berhasil hitung: {final_answer}")
+                except Exception as math_err:
+                    print(f"[MATH ERROR] Dialihkan ke Gemini: {math_err}")
+
+            if not success and image_url:
+                try:
+                    if "challenge/flags/flag_" in image_url:
+                        match = re.search(r'flag_([^.]+)\.png', image_url)
+                        if match: final_answer = match.group(1).replace('_', ' ').title(); success = True
+                    elif "challenge/animals/animal_" in image_url:
+                        match = re.search(r'animal_([^.]+)\.jpg', image_url)
+                        if match: final_answer = match.group(1).replace('_', ' ').title(); success = True
+                    elif "challenge/logos/logo_" in image_url:
+                        match = re.search(r'(logo_\d+)\.png', image_url)
+                        if match:
+                            logo_key = match.group(1)
+                            if logo_key in LOGO_MAP: final_answer = LOGO_MAP[logo_key].replace('_', ' ').title(); success = True
+                except: pass
+
+            if not success:
+                try:
+                    cleaned_math_text = full_text.replace('×', '*').replace('²', '^2')
+                    prompt = f"Kamu adalah mesin penjawab kuis otomatis. HANYA berikan jawaban bersih intinya saja.\n\nKuis:\n{cleaned_math_text}"
+                    response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                    if response and response.text:
+                        final_answer = response.text.strip().replace('.', '')
+                        if final_answer: success = True
+                except: pass
+
+            if final_answer and success:
+                # PENYESUAIAN SLOWMODE 5 DETIK SAAT MENGIRIM JAWABAN
+                time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
+                safe_buffer = 6.0 
+                
+                if time_since_last_send < safe_buffer:
+                    delay = safe_buffer - time_since_last_send + random.uniform(0.1, 0.5)
+                    print(f"[SLOWMODE GUARD] Menunda pengiriman jawaban selama {delay:.2f} detik...")
+                    await asyncio.sleep(delay)
+                
+                try:
+                    await asyncio.sleep(random.uniform(0.5, 1.5))
+                    await message.channel.send(final_answer)
+                    last_send_time = datetime.now(timezone.utc)
+                    print(f"[SPEED] Mengirim jawaban: '{final_answer}'")
+                except Exception as e:
+                    print(f"[ERROR SEND JAWABAN] {e}")
+                return
+
+        # =========================================================
+        # ALUR 2: KUIS SELESAI / TIMEOUT -> TRIGGGER !C AMAN
+        # =========================================================
+        is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower or "challenge solved" in content_lower or "time's up!" in content_lower
+
+        if is_quiz_ended:
+            if "msdn" in content_lower:
+                try:
+                    ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                    rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                    str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
+                    str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
+                    if "sent to your main" in str_reward.lower():
+                        str_reward = str_reward.split("Sent to your")[0].strip()
+
+                    wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
+                    history = load_loot_history()
+                    history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
+                    save_loot_history(history)
+                except: pass
+
+            if is_paused or is_triggering_c: return
+
+            is_triggering_c = True
+            
+            # PENYESUAIAN SLOWMODE 5 DETIK UNTUK MENGIRIM !c
+            time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
+            required_wait = random.uniform(7.0, 12.0) 
+            
+            if time_since_last_send < required_wait:
+                wait_time = required_wait - time_since_last_send
+                print(f"[COOLDOWN GUARD] Menunggu {wait_time:.2f} detik (Melewati Slowmode) sebelum !c berikutnya...")
+                await asyncio.sleep(wait_time)
+            
+            target_channel = self.get_channel(TARGET_CHANNEL_ID)
+            if target_channel:
+                try:
+                    print("[ACTION] Mencoba mengirim !c...")
+                    await target_channel.send("!c")
+                    last_activity_time = datetime.now(timezone.utc)
+                    last_send_time = datetime.now(timezone.utc)
+                    print("[FAST TRACK SUCCESS] !c berhasil dikirim dengan instan (bypass slowmode).")
+                except Exception as e:
+                    last_activity_time = datetime.now(timezone.utc)
+                    print(f"[FAILED TO SEND !c] Terkena error: {e}")
+                    
+            is_triggering_c = False
+
+    # =========================================================
+    # BACKGROUND WORKER LOOP (Setiap 30 Detik)
+    # =========================================================
+    async def background_30s_loop(self):
+        global is_paused, last_activity_time, is_triggering_c, last_send_time
+        await self.wait_until_ready()
+        
+        while not self.is_closed():
+            await asyncio.sleep(30)
+            
+            if is_paused or is_triggering_c:
+                continue
+
+            time_silent = (datetime.now(timezone.utc) - last_activity_time).total_seconds()
+            
+            if time_silent >= 90.0:
+                is_triggering_c = True
+                print(f"[BACKGROUND] Sepi selama {int(time_silent)} detik. Memancing !c baru...")
+                
+                target_channel = self.get_channel(TARGET_CHANNEL_ID)
+                if target_channel:
+                    try:
+                        await target_channel.send("!c")
+                        last_send_time = datetime.now(timezone.utc)
+                    except Exception as e:
+                        print(f"[BACKGROUND ERROR] {e}")
+                
+                last_activity_time = datetime.now(timezone.utc)
+                is_triggering_c = False
+
+client = MySelfBot()
+client.run(TOKEN_DISCORD)
