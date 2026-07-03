@@ -21,7 +21,7 @@ is_triggering_c = False
 quiz_channel_id = None
 
 # =========================================================
-# 2. SETUP WEB SERVER MINI, REKAPAN HADIAH, & STATS DASHBOARD
+# 2. SETUP WEB SERVER MINI & API REALTIME
 # =========================================================
 app = Flask('')
 DB_FILE = "loot_history.json"
@@ -42,42 +42,111 @@ HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Loot Kuis Logger</title>
+    <title>Loot Kuis Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e24; color: #fff; margin: 20px; }
-        h2 { color: #5865F2; border-bottom: 2px solid #5865F2; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-        .stats-box { background-color: #2f3136; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #43b581; position: relative; }
-        .stats-box p { margin: 8px 0; font-size: 0.95em; color: #dcddde; }
-        .stats-box strong { color: #fff; }
-        .highlight-xp { color: #faa61a; font-weight: bold; font-size: 1.1em; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #1e1e24; 
+            color: #fff; 
+            margin: 0; 
+            padding: 20px; 
+            height: 100vh; /* Kunci ukuran web sebesar layar */
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* Hilangkan scroll bar utama web */
+        }
+        h2 { 
+            color: #5865F2; 
+            border-bottom: 2px solid #5865F2; 
+            padding-bottom: 10px; 
+            margin-top: 0;
+            display: flex; justify-content: space-between; align-items: center; 
+            flex-shrink: 0;
+        }
         
-        .control-panel { margin-top: 15px; padding-top: 15px; border-top: 1px solid #4f545c; display: flex; align-items: center; justify-content: space-between; }
+        /* Stats Box */
+        .stats-box { 
+            background-color: #2f3136; padding: 15px; border-radius: 8px; 
+            margin-bottom: 15px; border-left: 4px solid #43b581; 
+            flex-shrink: 0;
+        }
+        .stats-info p { margin: 5px 0; font-size: 0.95em; color: #dcddde; }
+        .stats-info strong { color: #fff; }
+        
+        .stats-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); 
+            gap: 10px; 
+            margin-top: 15px; 
+        }
+        .stat-item { 
+            background: #202225; padding: 10px; border-radius: 5px; 
+            text-align: center; font-size: 0.9em; color: #b9bbbe; 
+        }
+        .stat-item span { 
+            display: block; font-size: 1.4em; font-weight: bold; color: #faa61a; margin-top: 5px;
+        }
+
+        /* Web Control Styles */
+        .control-panel { 
+            margin-top: 15px; padding-top: 15px; border-top: 1px solid #4f545c; 
+            display: flex; align-items: center; justify-content: space-between; 
+        }
         .status-badge { font-weight: bold; padding: 5px 10px; border-radius: 5px; background-color: #202225; }
-        .btn { border: none; padding: 10px 20px; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 1em; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+        .btn { border: none; padding: 10px 20px; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 1em; }
         .btn-start { background-color: #43b581; color: white; }
         .btn-start:hover { background-color: #3ca374; }
         .btn-pause { background-color: #ed4245; color: white; }
         .btn-pause:hover { background-color: #d83c3e; }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-        .table-container { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; background-color: #2f3136; border-radius: 8px; overflow: hidden; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; }
-        th { background-color: #5865F2; color: white; }
+        /* Table Container (Scrollable) */
+        .table-container { 
+            flex-grow: 1; 
+            overflow-y: auto; 
+            background-color: #2f3136; 
+            border-radius: 8px; 
+            position: relative;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        thead th { 
+            position: sticky; top: 0; 
+            background-color: #5865F2; 
+            color: white; 
+            z-index: 1; 
+            padding: 12px; text-align: left;
+            box-shadow: 0 2px 2px -1px rgba(0,0,0,0.4);
+        }
+        tbody td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; }
         tr:hover { background-color: #35383e; }
-        .timestamp { color: #b9bbbe; font-size: 0.85em; }
         .reward { color: #43b581; font-weight: bold; }
+        
+        /* Custom Scrollbar for aesthetic */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #202225; border-radius: 8px; }
+        ::-webkit-scrollbar-thumb { background: #4f545c; border-radius: 8px; }
+        ::-webkit-scrollbar-thumb:hover { background: #72767d; }
     </style>
 </head>
 <body>
-    <h2>🏆 Rekapan Hadiah Kuis (User: msdn)</h2>
+    <h2>🏆 Rekapan Hadiah Kuis</h2>
     
     <div class="stats-box">
-        <p>🟢 <strong>Server Up since:</strong> {{ start_str }}</p>
-        <p>⏱️ <strong>Bot running:</strong> {{ uptime_str }}</p>
-        <p>✨ <strong>XP Gained (This Session):</strong> <span class="highlight-xp">{{ total_xp }} %</span></p>
+        <div class="stats-info">
+            <p>🟢 <strong>Server Up since:</strong> <span id="start-str">Loading...</span></p>
+            <p>⏱️ <strong>Bot running:</strong> <span id="uptime-str">Loading...</span></p>
+        </div>
         
+        <div class="stats-grid">
+            <div class="stat-item">XP Gained<span id="val-xp">0 %</span></div>
+            <div class="stat-item">Gold Gained<span id="val-gold">0</span></div>
+            <div class="stat-item">Token Gained<span id="val-token">0</span></div>
+            <div class="stat-item">TP Gained<span id="val-tp">0</span></div>
+            <div class="stat-item">Rare Reward<span id="val-rare">0x</span></div>
+        </div>
+
         <div class="control-panel">
             <div>
                 🤖 <strong>Bot Status:</strong> <span id="status-badge" class="status-badge">Loading...</span>
@@ -91,26 +160,49 @@ HTML_TEMPLATE = """
             <thead>
                 <tr><th>Waktu (WIB)</th><th>Jawaban</th><th>Hadiah / Reward</th></tr>
             </thead>
-            <tbody>
-                {% if loots %}
-                    {% for loot in loots %}
-                    <tr><td>{{ loot.time }}</td><td><code>{{ loot.answer }}</code></td><td class="reward">{{ loot.reward }}</td></tr>
-                    {% endfor %}
-                {% else %}
-                    <tr><td colspan="3" style="text-align:center; padding:20px; color:#72767d;">Belum ada hadiah ter-log. Pantau Live Log Render!</td></tr>
-                {% endif %}
+            <tbody id="table-body">
+                <tr><td colspan="3" style="text-align:center; padding:20px; color:#72767d;">Memuat data real-time...</td></tr>
             </tbody>
         </table>
     </div>
 
     <script>
-        async function fetchStatus() {
+        let currentLootCount = -1; // Detektor perubahan agar tabel tak lompat ke atas
+
+        async function fetchAllData() {
             try {
-                let res = await fetch('/api/state');
+                let res = await fetch('/api/data');
                 let data = await res.json();
+                
+                // Update Teks Info
+                document.getElementById('start-str').innerText = data.start_str;
+                document.getElementById('uptime-str').innerText = data.uptime_str;
+                
+                // Update Metrik
+                document.getElementById('val-xp').innerText = data.total_xp + " %";
+                document.getElementById('val-gold').innerText = data.total_gold;
+                document.getElementById('val-token').innerText = data.total_token;
+                document.getElementById('val-tp').innerText = data.total_tp;
+                document.getElementById('val-rare').innerText = data.rare_count + "x";
+
+                // Update Status UI
                 updateUI(data.paused);
+                
+                // Update Tabel HANYA JIKA ada data baru masuk
+                if (data.loots.length !== currentLootCount) {
+                    let html = "";
+                    if (data.loots.length === 0) {
+                        html = "<tr><td colspan='3' style='text-align:center; color:#72767d; padding:20px;'>Belum ada hadiah ter-log.</td></tr>";
+                    } else {
+                        data.loots.forEach(loot => {
+                            html += `<tr><td>${loot.time}</td><td><code>${loot.answer}</code></td><td class="reward">${loot.reward}</td></tr>`;
+                        });
+                    }
+                    document.getElementById('table-body').innerHTML = html;
+                    currentLootCount = data.loots.length;
+                }
             } catch (error) {
-                console.error("Gagal mengambil status bot:", error);
+                console.error("Gagal menarik data API:", error);
             }
         }
 
@@ -146,8 +238,9 @@ HTML_TEMPLATE = """
             }
         }
 
-        fetchStatus();
-        setInterval(fetchStatus, 10000);
+        // Jalankan fetch 5 detik sekali
+        fetchAllData();
+        setInterval(fetchAllData, 5000);
     </script>
 </body>
 </html>
@@ -155,7 +248,13 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def home():
+    # Halaman HTML statis karena data ditarik via AJAX JSON
+    return render_template_string(HTML_TEMPLATE)
+
+@app.route('/api/data', methods=['GET'])
+def get_data():
     loots = load_loot_history()
+    
     now_utc = datetime.now(timezone.utc)
     uptime_delta = now_utc - START_TIME_UTC
     hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
@@ -166,22 +265,47 @@ def home():
     uptime_str = f"{hours} Hours {minutes} Minutes"
     
     total_xp = 0
+    total_gold = 0
+    total_token = 0
+    total_tp = 0
+    rare_count = 0
+    
     start_time_naive = start_time_wib.replace(tzinfo=None) 
+    
     for loot in loots:
         try:
             loot_time = datetime.strptime(loot["time"], '%Y-%m-%d %H:%M:%S')
             if loot_time >= start_time_naive:
-                match = re.search(r'(\d+)\s*(?:%|xp)', loot["reward"], re.IGNORECASE)
-                if match:
-                    total_xp += int(match.group(1))
+                rew = loot["reward"].lower()
+                
+                # Helper Regex Ekstraktor (Otomatis bersihkan titik/koma)
+                def extract_val(pattern):
+                    m = re.search(pattern, rew)
+                    if m:
+                        clean_str = m.group(1).replace(',', '').replace('.', '')
+                        return int(clean_str)
+                    return 0
+                
+                total_xp += extract_val(r'([\d,\.]+)\s*(?:%|xp)')
+                total_gold += extract_val(r'([\d,\.]+)\s*gold')
+                total_token += extract_val(r'([\d,\.]+)\s*token')
+                total_tp += extract_val(r'([\d,\.]+)\s*tp')
+                
+                if "rare" in rew:
+                    rare_count += 1
         except: pass
-            
-    return render_template_string(HTML_TEMPLATE, loots=loots, start_str=start_str, uptime_str=uptime_str, total_xp=total_xp)
 
-@app.route('/api/state', methods=['GET'])
-def get_state():
-    global is_paused
-    return jsonify({"paused": is_paused})
+    return jsonify({
+        "start_str": start_str,
+        "uptime_str": uptime_str,
+        "total_xp": total_xp,
+        "total_gold": total_gold,
+        "total_token": total_token,
+        "total_tp": total_tp,
+        "rare_count": rare_count,
+        "loots": loots,
+        "paused": is_paused
+    })
 
 @app.route('/api/toggle', methods=['POST'])
 def toggle_state():
@@ -204,6 +328,7 @@ Thread(target=run_web_server).start()
 # 3. DICTIONARY CHEAT CODE LOGO BRAND
 # =========================================================
 LOGO_MAP = {
+    # 1 - 99
     "logo_1": "evian", "logo_3": "kraft", "logo_4": "maggi", "logo_5": "burger king",
     "logo_6": "ben and jerrys", "logo_7": "chipotle", "logo_9": "dunkin", "logo_10": "fanta",
     "logo_11": "kitkat", "logo_12": "taco bell", "logo_13": "quaker", "logo_16": "kfc",
@@ -213,11 +338,15 @@ LOGO_MAP = {
     "logo_37": "monster", "logo_38": "pizza hut", "logo_39": "android", "logo_40": "adobe",
     "logo_41": "chrome", "logo_42": "gmail", "logo_44": "twitter", "logo_45": "starbucks",
     "logo_46": "xbox",
+
+    # 100 - 199
     "logo_101": "chanel", "logo_107": "champion", "logo_108": "lv", "logo_110": "levis",
     "logo_111": "rolex", "logo_112": "dickies", "logo_114": "columbia", "logo_116": "hermes",
     "logo_117": "palace", "logo_118": "kappa", "logo_119": "burberry", "logo_120": "puma",
     "logo_121": "reebok", "logo_125": "diesel", "logo_126": "fila", "logo_127": "versace",
     "logo_129": "hollister", "logo_133": "nike", "logo_136": "ck", "logo_138": "fred perry",
+
+    # 200 - 299
     "logo_201": "apple", "logo_202": "dolby", "logo_203": "philips", "logo_204": "alibaba",
     "logo_206": "cisco", "logo_207": "intel", "logo_208": "adobe", "logo_209": "alcatel",
     "logo_210": "amazon", "logo_211": "amd", "logo_212": "asus", "logo_214": "dell",
@@ -227,6 +356,8 @@ LOGO_MAP = {
     "logo_228": "seagate", "logo_229": "ericsson", "logo_230": "beats", "logo_231": "xiaomi",
     "logo_232": "uber", "logo_233": "youtube", "logo_234": "twitter", "logo_235": "Blackberry",
     "logo_236": "dropbox", "logo_237": "facebook", "logo_238": "google", "logo_239": "snapchat",
+
+    # 300 - 399
     "logo_301": "netflix", "logo_302": "nintendo", "logo_303": "universal", "logo_304": "walking dead",
     "logo_305": "gameloft", "logo_306": "game of thrones", "logo_307": "discovery", "logo_308": "monopoly",
     "logo_309": "konami", "logo_311": "bandai", "logo_313": "warner bros", "logo_314": "rockstar",
@@ -235,6 +366,8 @@ LOGO_MAP = {
     "logo_329": "sega", "logo_330": "star wars", "logo_331": "tencent", "logo_332": "terminator",
     "logo_333": "tiktok", "logo_334": "titanic", "logo_335": "soundcloud", "logo_336": "ubisoft",
     "logo_337": "lego", "logo_338": "discord", "logo_339": "spotify",
+
+    # 400 - 499
     "logo_402": "cadillac", "logo_403": "chevrolet", "logo_404": "mini", "logo_405": "porsche",
     "logo_406": "citroen", "logo_408": "infiniti", "logo_409": "jaguar", "logo_410": "volkswagen",
     "logo_411": "lexus", "logo_412": "peugeot", "logo_413": "mitsubishi", "logo_414": "suzuki",
@@ -243,6 +376,8 @@ LOGO_MAP = {
     "logo_424": "honda", "logo_425": "hyundai", "logo_426": "koenigsegg", "logo_430": "mazda",
     "logo_431": "nissan", "logo_432": "opel", "logo_433": "renault", "logo_435": "seat",
     "logo_437": "subaru", "logo_438": "volvo", "logo_439": "bmw",
+
+    # 500+
     "logo_501": "harley", "logo_502": "nescafe"
 }
 
@@ -263,7 +398,6 @@ ai_client = genai.Client(api_key=API_KEY_GEMINI)
 class MySelfBot(discord.Client):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Bikin gembok khusus antrian pesan
         self.send_lock = None
 
     async def on_ready(self):
@@ -277,7 +411,7 @@ class MySelfBot(discord.Client):
     async def on_message(self, message):
         global is_paused, last_activity_time, is_triggering_c, last_send_time
         
-        # --- SAKLAR REMOTE CONTROL ---
+        # --- SAKLAR REMOTE CONTROL (DISCORD CHAT) ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
@@ -293,18 +427,16 @@ class MySelfBot(discord.Client):
         if message.channel.id != TARGET_CHANNEL_ID: return
         if message.author.id != TARGET_USER_ID: return
         
-        # 🛑 FILTER 2 (ANTI BURST): Abaikan pesan basi peninggalan masa lalu yang dimuntahkan Discord saat reconnect
+        # 🛑 FILTER 2 (ANTI BURST): Abaikan pesan basi peninggalan masa lalu
         try:
             msg_date = message.created_at
             if msg_date.tzinfo is None:
                 msg_date = msg_date.replace(tzinfo=timezone.utc)
             if (datetime.now(timezone.utc) - msg_date).total_seconds() > 15.0:
-                # Pesan ini lebih dari 15 detik yang lalu, bot menolak untuk membalasnya agar tidak spam
                 return
         except:
             pass
 
-        # Reset global timer tiap ada aktivitas sah di channel target
         last_activity_time = datetime.now(timezone.utc)
 
         full_text = ""
@@ -383,7 +515,6 @@ class MySelfBot(discord.Client):
                 except: pass
 
             if final_answer and success:
-                # MENGGUNAKAN LOCK ANTRIAN: Tidak ada yang boleh nyerobot!
                 async with self.send_lock:
                     time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
                     safe_buffer = 6.0 
@@ -412,8 +543,11 @@ class MySelfBot(discord.Client):
                 try:
                     ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                     rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                    str_answer = ans_match.group(1).strip() if ans_match else "Tidak terdeteksi"
-                    str_reward = rew_match.group(1).strip() if rew_match else "Tidak terdeteksi"
+                    
+                    # 🛑 Membersihkan lambang Markdown Bintang (**) secara mutlak
+                    str_answer = ans_match.group(1).strip().replace('**', '') if ans_match else "Tidak terdeteksi"
+                    str_reward = rew_match.group(1).strip().replace('**', '') if rew_match else "Tidak terdeteksi"
+                    
                     if "sent to your main" in str_reward.lower():
                         str_reward = str_reward.split("Sent to your")[0].strip()
 
@@ -427,7 +561,6 @@ class MySelfBot(discord.Client):
 
             is_triggering_c = True
             
-            # MENGGUNAKAN LOCK ANTRIAN
             async with self.send_lock:
                 time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
                 required_wait = random.uniform(7.0, 12.0) 
