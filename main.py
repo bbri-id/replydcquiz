@@ -74,6 +74,7 @@ HTML_TEMPLATE = """
     <title>Loot Kuis Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
+        /* BASE DESKTOP STYLE */
         body { 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
             background-color: #1e1e24; color: #fff; margin: 0; padding: 20px; 
@@ -81,7 +82,7 @@ HTML_TEMPLATE = """
         }
         h2 { 
             color: #5865F2; border-bottom: 2px solid #5865F2; padding-bottom: 10px; margin-top: 0;
-            display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+            display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 1.5em;
         }
         
         .stats-box { 
@@ -105,8 +106,10 @@ HTML_TEMPLATE = """
             margin-top: 15px; padding-top: 15px; border-top: 1px solid #4f545c; 
             display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
         }
-        .control-info { display: flex; flex-direction: column; gap: 5px; }
+        .control-info { display: flex; flex-direction: column; gap: 5px; font-size: 0.9em; }
         .status-badge { font-weight: bold; padding: 3px 8px; border-radius: 5px; background-color: #202225; }
+        
+        .btn-wrapper { display: flex; gap: 10px; }
         .btn { border: none; padding: 10px 15px; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9em; }
         
         .btn-start { background-color: #43b581; color: white; }
@@ -116,7 +119,6 @@ HTML_TEMPLATE = """
         
         .btn-mode { background-color: #5865F2; color: white; }
         .btn-mode:hover { background-color: #4752c4; }
-        
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
         .tables-wrapper {
@@ -136,15 +138,43 @@ HTML_TEMPLATE = """
         .chat-header { background-color: #faa61a; color: #1e1e24; }
 
         table { width: 100%; border-collapse: collapse; }
-        tbody td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; font-size: 0.9em; }
+        tbody td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; font-size: 0.9em; word-wrap: break-word; }
         tr:hover { background-color: #35383e; }
         .reward { color: #43b581; font-weight: bold; }
-        .chat-author { color: #5865F2; font-weight: bold; }
+        .chat-author { color: #5865F2; font-weight: bold; display: block; margin-bottom: 2px;}
         
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #202225; border-radius: 8px; }
         ::-webkit-scrollbar-thumb { background: #4f545c; border-radius: 8px; }
         ::-webkit-scrollbar-thumb:hover { background: #72767d; }
+
+        /* 📱 RESPONSIVE MOBILE FIX */
+        @media (max-width: 768px) {
+            body { 
+                height: auto; /* Bebaskan kuncian layar agar bisa di-scroll ke bawah */
+                overflow-y: auto; 
+                padding: 10px; 
+            }
+            .stats-grid { 
+                grid-template-columns: repeat(2, 1fr); /* XP & Gold jadi 2 sejajar, tidak kesempitan */
+            }
+            .stat-item { padding: 8px; font-size: 0.8em; }
+            .stat-item span { font-size: 1.2em; }
+            
+            .control-panel { flex-direction: column; align-items: stretch; }
+            .btn-wrapper { width: 100%; margin-top: 10px; }
+            .btn { flex: 1; padding: 12px 5px; font-size: 0.85em; text-align: center; } /* Tombol jadi 50:50 memanjang */
+            
+            .tables-wrapper { 
+                display: flex; flex-direction: column; /* Tabel diubah atas-bawah, bukan kiri-kanan lagi */
+                gap: 15px; 
+            }
+            .table-container { 
+                height: 380px; /* Batas tinggi tabel di HP agar tidak bablas, tetap bisa discroll dalam tabel */
+            }
+            tbody td { padding: 8px; font-size: 0.85em; }
+            .table-header { font-size: 1em; padding: 10px; }
+        }
     </style>
 </head>
 <body>
@@ -171,7 +201,7 @@ HTML_TEMPLATE = """
                 <div>⚡ <strong>Speed:</strong> <span id="mode-badge" class="status-badge">Loading...</span></div>
                 <div>⚠️ <strong>Rate Limits Hit:</strong> <span id="rl-badge" class="status-badge" style="color:#ed4245;">0</span></div>
             </div>
-            <div>
+            <div class="btn-wrapper">
                 <button id="toggle-mode-btn" class="btn btn-mode" onclick="toggleMode()">⚙️ CHANGE MODE</button>
                 <button id="toggle-btn" class="btn" onclick="toggleBot()">⏳ Loading</button>
             </div>
@@ -244,7 +274,7 @@ HTML_TEMPLATE = """
                         html = "<tr><td style='text-align:center; color:#72767d; padding:20px;'>Room sepi. Belum ada chat player.</td></tr>";
                     } else {
                         data.chats.forEach(chat => {
-                            html += `<tr><td><span class="chat-author">${chat.author}</span>: ${chat.content} <br><span style="font-size:0.8em; color:#72767d;">${chat.time}</span></td></tr>`;
+                            html += `<tr><td><span class="chat-author">${chat.author}</span>${chat.content} <br><span style="font-size:0.8em; color:#72767d;">${chat.time}</span></td></tr>`;
                         });
                     }
                     document.getElementById('chat-body').innerHTML = html;
@@ -291,7 +321,7 @@ HTML_TEMPLATE = """
             if (botMode === "fast") {
                 badgeMode.innerHTML = "🏎️ FAST MODE"; badgeMode.style.color = "#faa61a";
             } else {
-                badgeMode.innerHTML = "🐢 SLOW MODE (Stealth/Manual)"; badgeMode.style.color = "#b9bbbe";
+                badgeMode.innerHTML = "🐢 SLOW MODE"; badgeMode.style.color = "#b9bbbe";
             }
         }
 
@@ -623,11 +653,16 @@ class MySelfBot(discord.Client):
             
             try:
                 async with self.send_lock:
-                    # KITA WAJIB MENUNGGU MUTLAK DARI SAAT SOAL DITUTUP
+                    time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
+                    
                     if bot_mode == "slow":
-                        await asyncio.sleep(random.uniform(7.0, 12.0))
+                        required_wait = random.uniform(7.0, 12.0) 
                     else:
-                        await asyncio.sleep(random.uniform(5.5, 6.5))
+                        required_wait = random.uniform(5.5, 6.5)
+                    
+                    if time_since_last_send < required_wait:
+                        wait_time = required_wait - time_since_last_send
+                        await asyncio.sleep(wait_time)
                     
                     target_channel = self.get_channel(TARGET_CHANNEL_ID)
                     if target_channel:
