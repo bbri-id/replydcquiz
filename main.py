@@ -19,19 +19,35 @@ last_send_time = datetime.now(timezone.utc)
 
 # Memory Stealth Mode
 last_player_chat_time = datetime.now(timezone.utc) - timedelta(minutes=10) 
-last_admin_activity = datetime.now(timezone.utc) - timedelta(minutes=65) 
+last_admin_activity = datetime.now(timezone.utc) - timedelta(minutes=15) 
 quiz_solved_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+last_tag_reply_time = datetime.now(timezone.utc) - timedelta(minutes=10)
 
 is_paused = False  
 is_triggering_c = False
 quiz_channel_id = None
 client = None  
 
-bot_mode = "fast" # Pilihan: "fast", "slow", "barbar"
+bot_mode = "fast" 
 rate_limit_count = 0
 
 last_answered_msg_id = None
 last_solved_msg_id = None
+
+# 🛑 MEMORI TOTAL GAINED (Akumulasi Sejak Server Up)
+session_total_xp = 0
+session_total_gold = 0
+session_total_token = 0
+session_total_tp = 0
+session_rare_count = 0
+
+# 🛑 MEMORI IDLE CHAT & LOSS STREAK (Humanizer)
+used_idle_chats = set()
+quiz_solved_counter = 0
+next_idle_chat_target = random.randint(5, 20)
+
+consecutive_losses = 0
+next_loss_target = random.randint(5, 7)
 
 # =========================================================
 # 2. PENCEGAT LOG UNTUK MENGHITUNG RATE LIMIT (429)
@@ -74,102 +90,52 @@ HTML_TEMPLATE = """
     <title>Loot Kuis Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        /* BASE DESKTOP STYLE */
-        body { 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background-color: #1e1e24; color: #fff; margin: 0; padding: 20px; 
-            height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden;
-        }
-        h2 { 
-            color: #5865F2; border-bottom: 2px solid #5865F2; padding-bottom: 10px; margin-top: 0;
-            display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 1.5em;
-        }
-        
-        .stats-box { 
-            background-color: #2f3136; padding: 15px; border-radius: 8px; 
-            margin-bottom: 15px; border-left: 4px solid #43b581; flex-shrink: 0;
-        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #1e1e24; color: #fff; margin: 0; padding: 20px; height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; }
+        h2 { color: #5865F2; border-bottom: 2px solid #5865F2; padding-bottom: 10px; margin-top: 0; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; font-size: 1.5em; }
+        .stats-box { background-color: #2f3136; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #43b581; flex-shrink: 0; }
         .stats-info p { margin: 5px 0; font-size: 0.95em; color: #dcddde; }
         .stats-info strong { color: #fff; }
-        
-        .stats-grid { 
-            display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); 
-            gap: 10px; margin-top: 15px; 
-        }
-        .stat-item { 
-            background: #202225; padding: 10px; border-radius: 5px; 
-            text-align: center; font-size: 0.9em; color: #b9bbbe; 
-        }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 15px; }
+        .stat-item { background: #202225; padding: 10px; border-radius: 5px; text-align: center; font-size: 0.9em; color: #b9bbbe; }
         .stat-item span { display: block; font-size: 1.4em; font-weight: bold; color: #faa61a; margin-top: 5px; }
-
-        .control-panel { 
-            margin-top: 15px; padding-top: 15px; border-top: 1px solid #4f545c; 
-            display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
-        }
+        .control-panel { margin-top: 15px; padding-top: 15px; border-top: 1px solid #4f545c; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
         .control-info { display: flex; flex-direction: column; gap: 5px; font-size: 0.9em; }
         .status-badge { font-weight: bold; padding: 3px 8px; border-radius: 5px; background-color: #202225; }
-        
         .btn-wrapper { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;}
         .btn { border: none; padding: 10px 15px; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9em; }
-        
         .btn-start { background-color: #43b581; color: white; }
         .btn-start:hover { background-color: #3ca374; }
         .btn-pause { background-color: #ed4245; color: white; }
         .btn-pause:hover { background-color: #d83c3e; }
-        
         .btn-mode { background-color: #5865F2; color: white; }
         .btn-mode:hover { background-color: #4752c4; }
-        
         .btn-barbar { background-color: #ff4757; color: white; box-shadow: 0 0 10px #ff4757; animation: pulse 2s infinite; }
         .btn-barbar:hover { background-color: #ff6b81; }
-        
-        @keyframes pulse {
-            0% { box-shadow: 0 0 5px #ff4757; }
-            50% { box-shadow: 0 0 15px #ff4757; }
-            100% { box-shadow: 0 0 5px #ff4757; }
-        }
-
+        @keyframes pulse { 0% { box-shadow: 0 0 5px #ff4757; } 50% { box-shadow: 0 0 15px #ff4757; } 100% { box-shadow: 0 0 5px #ff4757; } }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
-        .tables-wrapper {
-            display: grid; grid-template-columns: 2fr 1fr; gap: 15px; flex-grow: 1; min-height: 0;
-        }
-
-        .table-container { 
-            overflow-y: auto; background-color: #2f3136; border-radius: 8px; position: relative; 
-            border: 1px solid #202225;
-        }
-        .table-header {
-            position: sticky; top: 0; z-index: 2; padding: 12px; margin: 0;
-            text-align: center; color: white; font-weight: bold; font-size: 1.1em;
-            box-shadow: 0 2px 2px -1px rgba(0,0,0,0.4);
-        }
+        .tables-wrapper { display: grid; grid-template-columns: 2fr 1fr; gap: 15px; flex-grow: 1; min-height: 0; }
+        .table-container { overflow-y: auto; background-color: #2f3136; border-radius: 8px; position: relative; border: 1px solid #202225; }
+        .table-header { position: sticky; top: 0; z-index: 2; padding: 12px; margin: 0; text-align: center; color: white; font-weight: bold; font-size: 1.1em; box-shadow: 0 2px 2px -1px rgba(0,0,0,0.4); }
         .reward-header { background-color: #5865F2; }
         .chat-header { background-color: #faa61a; color: #1e1e24; }
-
         table { width: 100%; border-collapse: collapse; }
         tbody td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; font-size: 0.9em; word-wrap: break-word; }
         tr:hover { background-color: #35383e; }
         .reward { color: #43b581; font-weight: bold; }
         .chat-author { color: #5865F2; font-weight: bold; display: block; margin-bottom: 2px;}
-        
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #202225; border-radius: 8px; }
         ::-webkit-scrollbar-thumb { background: #4f545c; border-radius: 8px; }
         ::-webkit-scrollbar-thumb:hover { background: #72767d; }
-
-        /* 📱 RESPONSIVE MOBILE FIX */
         @media (max-width: 768px) {
             body { height: auto; overflow-y: auto; padding: 10px; }
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .stat-item { padding: 8px; font-size: 0.8em; }
             .stat-item span { font-size: 1.2em; }
-            
             .control-panel { flex-direction: column; align-items: stretch; }
             .btn-wrapper { width: 100%; margin-top: 10px; justify-content: space-between; }
             .btn { flex: 1 1 45%; padding: 12px 5px; font-size: 0.85em; text-align: center; } 
             #barbar-btn { flex: 1 1 100%; margin-top: 5px; font-size: 1em; }
-            
             .tables-wrapper { display: flex; flex-direction: column; gap: 15px; }
             .table-container { height: 380px; }
             tbody td { padding: 8px; font-size: 0.85em; }
@@ -179,14 +145,12 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <h2>🏆 Rekapan Hadiah Kuis</h2>
-    
     <div class="stats-box">
         <div class="stats-info">
             <p>🟢 <strong>Server Up since:</strong> <span id="start-str">Loading...</span></p>
             <p>⏱️ <strong>Bot running:</strong> <span id="uptime-str">Loading...</span></p>
             <p>👤 <strong>Stealth Tracker:</strong> <span id="stealth-str" style="font-weight:bold;">Aman</span></p>
         </div>
-        
         <div class="stats-grid">
             <div class="stat-item">XP Gained<span id="val-xp">0 %</span></div>
             <div class="stat-item">Gold Gained<span id="val-gold">0</span></div>
@@ -194,7 +158,6 @@ HTML_TEMPLATE = """
             <div class="stat-item">TP Gained<span id="val-tp">0</span></div>
             <div class="stat-item">Rare Reward<span id="val-rare">0x</span></div>
         </div>
-
         <div class="control-panel">
             <div class="control-info">
                 <div>🤖 <strong>Status:</strong> <span id="status-badge" class="status-badge">Loading...</span></div>
@@ -208,29 +171,17 @@ HTML_TEMPLATE = """
             </div>
         </div>
     </div>
-
     <div class="tables-wrapper">
         <div class="table-container">
             <div class="table-header reward-header">🎁 Reward Log</div>
-            <table>
-                <tbody id="table-body">
-                    <tr><td colspan="3" style="text-align:center; padding:20px; color:#72767d;">Memuat data real-time...</td></tr>
-                </tbody>
-            </table>
+            <table><tbody id="table-body"><tr><td colspan="3" style="text-align:center; padding:20px; color:#72767d;">Memuat data real-time...</td></tr></tbody></table>
         </div>
-
         <div class="table-container">
             <div class="table-header chat-header">💬 Player Chat Interceptor</div>
-            <table>
-                <tbody id="chat-body">
-                    <tr><td style="text-align:center; padding:20px; color:#72767d;">Menunggu chat player...</td></tr>
-                </tbody>
-            </table>
+            <table><tbody id="chat-body"><tr><td style="text-align:center; padding:20px; color:#72767d;">Menunggu chat player...</td></tr></tbody></table>
         </div>
     </div>
-
     <script>
-        // Gunakan Hash dari data terbaru agar tabel 100% realtime meski data dibatasi 50 baris
         let lastLootHash = ""; 
         let lastChatHash = "";
 
@@ -257,7 +208,6 @@ HTML_TEMPLATE = """
 
                 updateUI(data.paused, data.mode);
                 
-                // Cek data terbaru dari urutan teratas (Index 0)
                 let newLootHash = data.loots.length > 0 ? JSON.stringify(data.loots[0]) : "empty";
                 if (newLootHash !== lastLootHash) {
                     let html = "";
@@ -272,7 +222,6 @@ HTML_TEMPLATE = """
                     lastLootHash = newLootHash;
                 }
 
-                // Cek chat terbaru dari urutan teratas (Index 0)
                 let newChatHash = data.chats.length > 0 ? JSON.stringify(data.chats[0]) : "empty";
                 if (newChatHash !== lastChatHash) {
                     let html = "";
@@ -345,13 +294,10 @@ HTML_TEMPLATE = """
         }
 
         fetchAllData();
-        // Polling dipercepat jadi 2 Detik agar sangat Real-Time!
         setInterval(fetchAllData, 2000); 
 
         document.addEventListener("visibilitychange", function() {
-            if (!document.hidden) {
-                fetchAllData();
-            }
+            if (!document.hidden) fetchAllData();
         });
     </script>
 </body>
@@ -381,44 +327,22 @@ def get_data():
     
     if bot_mode == "barbar":
         stealth_str = "🔥 MODE BARBAR (Stealth OFF)"
-    elif time_since_admin < 3600.0:
-        stealth_str = f"🚨 ADMIN ONLINE! Tiarap {int((3600 - time_since_admin)/60)} Menit."
+    elif time_since_admin < 600.0:  # ADMIN HANYA 10 MENIT
+        stealth_str = f"🚨 ADMIN ONLINE! Tiarap {int((600 - time_since_admin)/60)} Menit."
     elif time_since_player < 300.0:
         stealth_str = f"⚠️ Ada Player! Tiarap {int(300 - time_since_player)} Detik."
     else:
         stealth_str = "🟢 Aman (Sepi)"
-    
-    total_xp = total_gold = total_token = total_tp = rare_count = 0
-    start_time_naive = start_time_wib.replace(tzinfo=None) 
-    
-    for loot in loots:
-        try:
-            loot_time = datetime.strptime(loot["time"], '%Y-%m-%d %H:%M:%S')
-            if loot_time >= start_time_naive:
-                rew = loot["reward"].lower()
-                def extract_val(pattern):
-                    m = re.search(pattern, rew)
-                    if m:
-                        clean_str = m.group(1).replace(',', '').replace('.', '')
-                        return int(clean_str)
-                    return 0
-                
-                total_xp += extract_val(r'([\d,\.]+)\s*(?:%|xp)')
-                total_gold += extract_val(r'([\d,\.]+)\s*gold')
-                total_token += extract_val(r'([\d,\.]+)\s*token')
-                total_tp += extract_val(r'([\d,\.]+)\s*tp')
-                if "rare" in rew: rare_count += 1
-        except: pass
 
     return jsonify({
         "start_str": start_str,
         "uptime_str": uptime_str,
         "stealth_str": stealth_str,
-        "total_xp": total_xp,
-        "total_gold": total_gold,
-        "total_token": total_token,
-        "total_tp": total_tp,
-        "rare_count": rare_count,
+        "total_xp": session_total_xp,
+        "total_gold": session_total_gold,
+        "total_token": session_total_token,
+        "total_tp": session_total_tp,
+        "rare_count": session_rare_count,
         "loots": loots,
         "chats": chats,
         "paused": is_paused,
@@ -515,27 +439,49 @@ if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID or not TARGET_C
 
 ai_client = genai.Client(api_key=API_KEY_GEMINI)
 
-# 🛑 FUNGSI TYPING RANDOMIZER (HUMANIZER)
+# 🛑 FUNGSI TYPING RANDOMIZER (HUMANIZER) ADVANCED
 def apply_human_typing(text):
     ans = str(text)
     if ans.isdigit(): return ans 
     
-    if '-' in ans:
-        choice = random.random()
-        if choice < 0.4: ans = ans.replace('-', ' ')
-        elif choice < 0.8: ans = ans.replace('-', '')
+    # 50% Peluang memanipulasi simbol/spasi tanpa ngurangin alfabet asli
+    if random.random() < 0.50:
+        if ' ' in ans or '-' in ans:
+            ans = ans.replace(' ', '').replace('-', '')
+        else:
+            if len(ans) >= 4:
+                idx = random.randint(2, len(ans)-2)
+                ans = ans[:idx] + ' ' + ans[idx:]
         
-    if ' ' in ans and random.random() < 0.3:
-        ans = ans.replace(' ', '', 1) 
-        
+    # Casing yang super tidak berpola
     case_choice = random.random()
-    if case_choice < 0.60: ans = ans.lower() 
-    elif case_choice < 0.75: pass 
-    elif case_choice < 0.90:
-        if len(ans) > 2: ans = ans[:2].upper() + ans[2:].lower() 
-    else: ans = ans.upper() 
+    if case_choice < 0.40: 
+        ans = ans.lower() 
+    elif case_choice < 0.60:
+        ans_list = list(ans.lower())
+        num_upper = random.randint(1, max(1, len(ans_list)//2))
+        for _ in range(num_upper):
+            idx = random.randint(0, len(ans_list)-1)
+            ans_list[idx] = ans_list[idx].upper()
+        ans = "".join(ans_list)
+    elif case_choice < 0.80:
+        if len(ans) > 2: 
+            ans = ans[0].lower() + ans[1:].upper() # cONTOH
+        else: 
+            ans = ans.upper() 
+    else: 
+        pass 
         
     return ans
+
+# 🛑 HELPER: Mengambil respon AI di Latar Belakang agar Bot tidak Freeze
+async def generate_gemini_text(prompt):
+    def fetch():
+        try:
+            response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            return response.text.strip().replace('"', '')
+        except: return ""
+    return await asyncio.to_thread(fetch)
 
 class MySelfBot(discord.Client):
     def __init__(self, *args, **kwargs):
@@ -561,13 +507,54 @@ class MySelfBot(discord.Client):
                     await target_channel.send("!c")
                     last_activity_time = datetime.now(timezone.utc)
                     last_send_time = datetime.now(timezone.utc)
-                except Exception as e: print(f"[START ERROR] {e}")
+                except: pass
+
+    # 🛑 FITUR AI 1: Bosen/Pegel saat Menang Terus
+    async def send_idle_chat(self):
+        history_str = ", ".join(list(used_idle_chats)[-10:]) if used_idle_chats else "belum ada"
+        prompt = f"Buat 1 kalimat keluhan singkat ala gamer gen-Z Indonesia yang lagi pegel/bosen ngetik kuis Discord terus. Max 5 kata. Huruf kecil, typo dikit wajar atau 1 emot. DILARANG KERAS menggunakan kalimat yang mirip dengan ini: {history_str}. HANYA berikan output teksnya saja."
+        msg = await generate_gemini_text(prompt)
+        if msg:
+            used_idle_chats.add(msg)
+            await asyncio.sleep(random.uniform(2.0, 5.0))
+            target = self.get_channel(TARGET_CHANNEL_ID)
+            if target: 
+                print(f"[AI CHAT] Mengeluh Pegel: {msg}")
+                await target.send(msg)
+
+    # 🛑 FITUR AI 2: Kesalip/Kalah Streak (Bluffing Mode)
+    async def send_loss_streak_chat(self):
+        history_str = ", ".join(list(used_idle_chats)[-10:]) if used_idle_chats else "belum ada"
+        prompt = (f"Buat 1 keluhan singkat gamer gen-Z Indonesia yang kesel karena kesalip/kalah cepat jawab kuis Discord berkali-kali. "
+                  f"Alasan bisa wifi lemot, lag, ngantuk, atau cape. Max 6 kata. Huruf kecil semua, boleh ada typo wajar atau 1 emot. "
+                  f"DILARANG KERAS pakai kata 'udahan', 'off', 'berhenti', 'cabut', 'stop', 'tidur'. "
+                  f"DILARANG KERAS pakai kalimat yang mirip dengan ini: {history_str}. HANYA berikan output teksnya saja.")
+        msg = await generate_gemini_text(prompt)
+        if msg:
+            used_idle_chats.add(msg)
+            await asyncio.sleep(random.uniform(3.0, 6.0))
+            target = self.get_channel(TARGET_CHANNEL_ID)
+            if target: 
+                print(f"[AI CHAT] Kesalip Streak: {msg}")
+                await target.send(msg)
+
+    # 🛑 FITUR AI 3: BALES JIKA DI-TAG/REPLY
+    async def send_tag_reply(self, channel):
+        prompt = "Ada player discord iseng ngetag/quote pesan kamu. Balas dengan santai ala gamer cowok. Sangat singkat, max 2 kata. Boleh pakai kata 'wkwk', 'kenapa', '?', atau 1 emot aja. Jangan kaku. HANYA berikan output teksnya saja."
+        msg = await generate_gemini_text(prompt)
+        if msg:
+            await asyncio.sleep(random.uniform(2.0, 6.0))
+            print(f"[AI CHAT] Membalas Tag: {msg}")
+            await channel.send(msg)
 
     async def process_discord_event(self, message):
         global is_paused, last_activity_time, is_triggering_c, last_send_time, bot_mode
         global last_answered_msg_id, last_solved_msg_id, last_player_chat_time
-        global quiz_solved_time, last_admin_activity
-        
+        global quiz_solved_time, last_admin_activity, last_tag_reply_time
+        global session_total_xp, session_total_gold, session_total_token, session_total_tp, session_rare_count
+        global quiz_solved_counter, next_idle_chat_target
+        global consecutive_losses, next_loss_target
+
         # 🕵️ RADAR ADMIN
         author_name = message.author.name.lower()
         author_display = message.author.display_name.lower()
@@ -575,11 +562,8 @@ class MySelfBot(discord.Client):
             last_admin_activity = datetime.now(timezone.utc)
             if bot_mode == "fast":
                 bot_mode = "slow"
-                print(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 60 Menit.")
-            elif bot_mode == "barbar":
-                pass
+                print(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 10 Menit.")
 
-        # --- SAKLAR REMOTE CONTROL ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
@@ -592,7 +576,7 @@ class MySelfBot(discord.Client):
 
         if message.channel.id != TARGET_CHANNEL_ID: return
 
-        # 🕵️ ALUR INTERCEPTOR: DETEKSI CHAT PLAYER LAIN
+        # 🕵️ ALUR INTERCEPTOR: DETEKSI CHAT PLAYER LAIN & AUTO-REPLY TAG
         is_other_player = (not message.author.bot) and (message.author.id != TARGET_USER_ID)
         if is_other_player:
             if message.content and not message.content.startswith('!'):
@@ -605,6 +589,18 @@ class MySelfBot(discord.Client):
                 if bot_mode == "fast":
                     bot_mode = "slow"
                     print(f"[STEALTH ALERT] Player {message.author.name} mengetik! Tiarap ke SLOW MODE.")
+
+                # 🛑 CEK JIKA KITA DI-TAG / DI-QUOTE
+                is_mentioned = str(self.user.id) in message.content
+                is_replied = message.reference and getattr(message.reference.resolved, 'author', None) and message.reference.resolved.author.id == self.user.id
+                
+                if is_mentioned or is_replied:
+                    time_since_tag = (datetime.now(timezone.utc) - last_tag_reply_time).total_seconds()
+                    # Cooldown Safety: Hanya balas 1 tag setiap 2 Menit (120 detik)
+                    if time_since_tag >= 120.0:
+                        last_tag_reply_time = datetime.now(timezone.utc)
+                        print(f"[TAG DETECTED] Di-tag oleh {message.author.name}. AI menyiapkan balasan...")
+                        self.loop.create_task(self.send_tag_reply(message.channel))
             return 
         
         if message.author.bot == False and message.author.id != TARGET_USER_ID: return
@@ -640,11 +636,9 @@ class MySelfBot(discord.Client):
         if "please wait" in content_lower and "before starting another challenge" in content_lower:
             match = re.search(r'wait (\d+)s', content_lower)
             wait_s = int(match.group(1)) if match else 5
-            
             async def retry_c(delay):
                 await asyncio.sleep(delay + 1.0)
                 await self.trigger_manual_c()
-            
             self.loop.create_task(retry_c(wait_s))
             return
 
@@ -658,7 +652,9 @@ class MySelfBot(discord.Client):
             last_solved_msg_id = message.id
             quiz_solved_time = datetime.now(timezone.utc) 
 
+            # 🛑 DETEKSI LOSS STREAK & LOG REWARD
             if "msdn" in content_lower:
+                consecutive_losses = 0 # RESET Streak karena bot MENANG
                 try:
                     ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                     rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
@@ -678,7 +674,34 @@ class MySelfBot(discord.Client):
                     if not is_duplicate:
                         history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
                         save_json_db(DB_FILE, history)
+                        
+                        # 🛑 TAMBAHKAN KE MEMORI TOTAL SESSION
+                        rew_lower = str_reward.lower()
+                        def extract_val(pattern, text):
+                            m = re.search(pattern, text)
+                            if m: return int(m.group(1).replace(',', '').replace('.', ''))
+                            return 0
+                        
+                        session_total_xp += extract_val(r'([\d,\.]+)\s*(?:%|xp)', rew_lower)
+                        session_total_gold += extract_val(r'([\d,\.]+)\s*gold', rew_lower)
+                        session_total_token += extract_val(r'([\d,\.]+)\s*token', rew_lower)
+                        session_total_tp += extract_val(r'([\d,\.]+)\s*tp', rew_lower)
+                        if "rare" in rew_lower: session_rare_count += 1
+
+                        # 🛑 NAIKKAN COUNTER IDLE CHAT (Bosan Menang)
+                        quiz_solved_counter += 1
+                        if quiz_solved_counter >= next_idle_chat_target:
+                            quiz_solved_counter = 0
+                            next_idle_chat_target = random.randint(5, 20)
+                            self.loop.create_task(self.send_idle_chat())
                 except: pass
+            else:
+                # 🛑 KITA KALAH / KESALIP!
+                consecutive_losses += 1
+                if consecutive_losses >= next_loss_target:
+                    consecutive_losses = 0
+                    next_loss_target = random.randint(5, 7)
+                    self.loop.create_task(self.send_loss_streak_chat())
 
             if is_paused or is_triggering_c: return
             is_triggering_c = True
@@ -814,7 +837,7 @@ class MySelfBot(discord.Client):
             time_since_admin = (datetime.now(timezone.utc) - last_admin_activity).total_seconds()
             time_since_player = (datetime.now(timezone.utc) - last_player_chat_time).total_seconds()
             
-            if bot_mode == "slow" and time_since_player >= 300.0 and time_since_admin >= 3600.0:
+            if bot_mode == "slow" and time_since_player >= 300.0 and time_since_admin >= 600.0:
                 bot_mode = "fast"
                 print("[AUTO MODE] Ruangan dan Admin sepi. Kembali ke FAST MODE.")
                 
