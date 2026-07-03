@@ -27,7 +27,7 @@ is_triggering_c = False
 quiz_channel_id = None
 client = None  
 
-bot_mode = "fast" # Pilihan: "fast" atau "slow"
+bot_mode = "fast" # Pilihan: "fast", "slow", "barbar"
 rate_limit_count = 0
 
 last_answered_msg_id = None
@@ -109,7 +109,7 @@ HTML_TEMPLATE = """
         .control-info { display: flex; flex-direction: column; gap: 5px; font-size: 0.9em; }
         .status-badge { font-weight: bold; padding: 3px 8px; border-radius: 5px; background-color: #202225; }
         
-        .btn-wrapper { display: flex; gap: 10px; }
+        .btn-wrapper { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;}
         .btn { border: none; padding: 10px 15px; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9em; }
         
         .btn-start { background-color: #43b581; color: white; }
@@ -119,6 +119,16 @@ HTML_TEMPLATE = """
         
         .btn-mode { background-color: #5865F2; color: white; }
         .btn-mode:hover { background-color: #4752c4; }
+        
+        .btn-barbar { background-color: #ff4757; color: white; box-shadow: 0 0 10px #ff4757; animation: pulse 2s infinite; }
+        .btn-barbar:hover { background-color: #ff6b81; }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 5px #ff4757; }
+            50% { box-shadow: 0 0 15px #ff4757; }
+            100% { box-shadow: 0 0 5px #ff4757; }
+        }
+
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
         .tables-wrapper {
@@ -150,28 +160,18 @@ HTML_TEMPLATE = """
 
         /* 📱 RESPONSIVE MOBILE FIX */
         @media (max-width: 768px) {
-            body { 
-                height: auto; /* Bebaskan kuncian layar agar bisa di-scroll ke bawah */
-                overflow-y: auto; 
-                padding: 10px; 
-            }
-            .stats-grid { 
-                grid-template-columns: repeat(2, 1fr); /* XP & Gold jadi 2 sejajar, tidak kesempitan */
-            }
+            body { height: auto; overflow-y: auto; padding: 10px; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
             .stat-item { padding: 8px; font-size: 0.8em; }
             .stat-item span { font-size: 1.2em; }
             
             .control-panel { flex-direction: column; align-items: stretch; }
-            .btn-wrapper { width: 100%; margin-top: 10px; }
-            .btn { flex: 1; padding: 12px 5px; font-size: 0.85em; text-align: center; } /* Tombol jadi 50:50 memanjang */
+            .btn-wrapper { width: 100%; margin-top: 10px; justify-content: space-between; }
+            .btn { flex: 1 1 45%; padding: 12px 5px; font-size: 0.85em; text-align: center; } 
+            #barbar-btn { flex: 1 1 100%; margin-top: 5px; font-size: 1em; } /* Tombol Barbar Penuh di HP */
             
-            .tables-wrapper { 
-                display: flex; flex-direction: column; /* Tabel diubah atas-bawah, bukan kiri-kanan lagi */
-                gap: 15px; 
-            }
-            .table-container { 
-                height: 380px; /* Batas tinggi tabel di HP agar tidak bablas, tetap bisa discroll dalam tabel */
-            }
+            .tables-wrapper { display: flex; flex-direction: column; gap: 15px; }
+            .table-container { height: 380px; }
             tbody td { padding: 8px; font-size: 0.85em; }
             .table-header { font-size: 1em; padding: 10px; }
         }
@@ -204,6 +204,7 @@ HTML_TEMPLATE = """
             <div class="btn-wrapper">
                 <button id="toggle-mode-btn" class="btn btn-mode" onclick="toggleMode()">⚙️ CHANGE MODE</button>
                 <button id="toggle-btn" class="btn" onclick="toggleBot()">⏳ Loading</button>
+                <button id="barbar-btn" class="btn btn-barbar" onclick="toggleBarbar()">🔥 BARBAR</button>
             </div>
         </div>
     </div>
@@ -234,7 +235,8 @@ HTML_TEMPLATE = """
 
         async function fetchAllData() {
             try {
-                let res = await fetch('/api/data');
+                // Penambahan Cache-Busting (Tanggal/Waktu Unik) agar HP dipaksa ambil data terbaru
+                let res = await fetch('/api/data?_=' + new Date().getTime());
                 let data = await res.json();
                 
                 document.getElementById('start-str').innerText = data.start_str;
@@ -242,7 +244,7 @@ HTML_TEMPLATE = """
                 
                 let stealthEl = document.getElementById('stealth-str');
                 stealthEl.innerText = data.stealth_str;
-                if(data.stealth_str.includes("ADMIN")) stealthEl.style.color = "#ed4245";
+                if(data.stealth_str.includes("ADMIN") || data.stealth_str.includes("OFF")) stealthEl.style.color = "#ed4245";
                 else if(data.stealth_str.includes("Player")) stealthEl.style.color = "#faa61a";
                 else stealthEl.style.color = "#43b581";
                 
@@ -305,6 +307,17 @@ HTML_TEMPLATE = """
             btn.disabled = false;
         }
 
+        async function toggleBarbar() {
+            let btn = document.getElementById('barbar-btn');
+            btn.disabled = true;
+            try {
+                let res = await fetch('/api/toggle_barbar', { method: 'POST' });
+                let data = await res.json();
+                updateUI(data.paused, data.mode);
+            } catch (error) { alert("Gagal mengubah mode!"); }
+            btn.disabled = false;
+        }
+
         function updateUI(isPaused, botMode) {
             let badgeStatus = document.getElementById('status-badge');
             let badgeMode = document.getElementById('mode-badge');
@@ -318,15 +331,26 @@ HTML_TEMPLATE = """
                 btn.className = "btn btn-pause"; btn.innerHTML = "⏸️ PAUSE BOT";
             }
 
-            if (botMode === "fast") {
+            if (botMode === "barbar") {
+                badgeMode.innerHTML = "🔥 BARBAR (No Rules!)"; badgeMode.style.color = "#ff4757";
+            } else if (botMode === "fast") {
                 badgeMode.innerHTML = "🏎️ FAST MODE"; badgeMode.style.color = "#faa61a";
             } else {
-                badgeMode.innerHTML = "🐢 SLOW MODE"; badgeMode.style.color = "#b9bbbe";
+                badgeMode.innerHTML = "🐢 SLOW MODE (Stealth/Manual)"; badgeMode.style.color = "#b9bbbe";
             }
         }
 
+        // Tembak Data Pertama Kali
         fetchAllData();
+        // Polling setiap 3 detik
         setInterval(fetchAllData, 3000); 
+
+        // 📱 VISIBILITY LISTENER: Jika HP baru nyala / tab baru dibuka, paksa sinkron!
+        document.addEventListener("visibilitychange", function() {
+            if (!document.hidden) {
+                fetchAllData();
+            }
+        });
     </script>
 </body>
 </html>
@@ -353,7 +377,9 @@ def get_data():
     time_since_admin = (now_utc - last_admin_activity).total_seconds()
     time_since_player = (now_utc - last_player_chat_time).total_seconds()
     
-    if time_since_admin < 3600.0:
+    if bot_mode == "barbar":
+        stealth_str = "🔥 MODE BARBAR (Stealth OFF)"
+    elif time_since_admin < 3600.0:
         stealth_str = f"🚨 ADMIN ONLINE! Tiarap {int((3600 - time_since_admin)/60)} Menit."
     elif time_since_player < 300.0:
         stealth_str = f"⚠️ Ada Player! Tiarap {int(300 - time_since_player)} Detik."
@@ -412,7 +438,16 @@ def toggle_state():
 @app.route('/api/toggle_mode', methods=['POST'])
 def toggle_mode():
     global bot_mode
+    # Tombol biasa hanya switch antara fast dan slow
     bot_mode = "slow" if bot_mode == "fast" else "fast"
+    return jsonify({"paused": is_paused, "mode": bot_mode})
+
+@app.route('/api/toggle_barbar', methods=['POST'])
+def toggle_barbar():
+    global bot_mode
+    # Tombol Barbar: Kalau dipencet jadi barbar, dipencet lagi kembali normal ke fast
+    bot_mode = "fast" if bot_mode == "barbar" else "barbar"
+    print(f"[WEB CONTROL] 🔥 Mode Barbar: {bot_mode.upper()}")
     return jsonify({"paused": is_paused, "mode": bot_mode})
 
 def run_web_server():
@@ -534,272 +569,19 @@ class MySelfBot(discord.Client):
         global last_answered_msg_id, last_solved_msg_id, last_player_chat_time
         global quiz_solved_time, last_admin_activity
         
-        # 🕵️ RADAR ADMIN: Deteksi admin bicara di SEMUA channel
+        # 🕵️ RADAR ADMIN
         author_name = message.author.name.lower()
         author_display = message.author.display_name.lower()
         if any(admin in author_name or admin in author_display for admin in ["ternate", "pandansex"]):
             last_admin_activity = datetime.now(timezone.utc)
             if bot_mode == "fast":
                 bot_mode = "slow"
-                print(f"[🚨 ADMIN ALERT] Admin {message.author.name} beraktivitas! Kunci SLOW MODE 60 Menit.")
+                print(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 60 Menit.")
+            elif bot_mode == "barbar":
+                print(f"[🔥 BARBAR] Mengabaikan aktivitas Admin {message.author.name}!")
 
-        # --- SAKLAR REMOTE CONTROL ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
                 is_paused = True
             elif "capek" in msg_lower and is_paused:
-                is_paused = False
-                last_activity_time = datetime.now(timezone.utc)
-                self.loop.create_task(self.trigger_manual_c())
-            return
-
-        if message.channel.id != TARGET_CHANNEL_ID: return
-
-        # =========================================================
-        # 🕵️ ALUR INTERCEPTOR: DETEKSI CHAT PLAYER LAIN
-        # =========================================================
-        is_other_player = (not message.author.bot) and (message.author.id != TARGET_USER_ID)
-        if is_other_player:
-            if message.content and not message.content.startswith('!'):
-                wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
-                chat_history = load_json_db(CHAT_DB_FILE)
-                chat_history.insert(0, {"time": wib_time.strftime('%H:%M:%S WIB'), "author": message.author.name, "content": message.content})
-                save_json_db(CHAT_DB_FILE, chat_history)
-
-                last_player_chat_time = datetime.now(timezone.utc)
-                if bot_mode == "fast":
-                    bot_mode = "slow"
-                    print(f"[STEALTH ALERT] Player {message.author.name} mengetik! Bot tiarap ke SLOW MODE.")
-            return 
-        
-        if message.author.bot == False and message.author.id != TARGET_USER_ID: return
-
-        try:
-            msg_date = message.created_at
-            if msg_date.tzinfo is None: msg_date = msg_date.replace(tzinfo=timezone.utc)
-            if (datetime.now(timezone.utc) - msg_date).total_seconds() > 60.0: return
-        except: pass
-
-        last_activity_time = datetime.now(timezone.utc)
-
-        full_text = ""
-        image_urls = []
-
-        if message.embeds:
-            for embed in message.embeds:
-                if embed.title: full_text += embed.title + "\n"
-                if embed.description: full_text += embed.description + "\n"
-                if embed.fields:
-                    for field in embed.fields: full_text += f"{field.name}: {field.value}\n"
-                if embed.footer and embed.footer.text: full_text += embed.footer.text + "\n"
-                
-                # Jaga-jaga Discord mengubah letak gambar ke Thumbnail
-                if embed.image and embed.image.url: image_urls.append(embed.image.url)
-                if embed.thumbnail and embed.thumbnail.url: image_urls.append(embed.thumbnail.url)
-
-        if message.content: full_text += "\n" + message.content
-        content_lower = full_text.lower()
-
-        # =========================================================
-        # ALUR 0: DETEKSI COOLDOWN LIONNSEX (Self-Healing)
-        # =========================================================
-        if "please wait" in content_lower and "before starting another challenge" in content_lower:
-            match = re.search(r'wait (\d+)s', content_lower)
-            wait_s = int(match.group(1)) if match else 5
-            print(f"[WARNING LION] Kena cooldown dari LionNSEX! Auto-retry dalam {wait_s + 1} detik...")
-            
-            async def retry_c(delay):
-                await asyncio.sleep(delay + 1.0)
-                await self.trigger_manual_c()
-            
-            self.loop.create_task(retry_c(wait_s))
-            return
-
-        # =========================================================
-        # ALUR 1: DETEKSI KUIS SELESAI
-        # =========================================================
-        is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower or "challenge solved" in content_lower or "time's up!" in content_lower
-
-        if is_quiz_ended:
-            if message.id == last_solved_msg_id: return 
-            last_solved_msg_id = message.id
-            quiz_solved_time = datetime.now(timezone.utc) 
-
-            if "msdn" in content_lower:
-                try:
-                    ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                    rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                    str_answer = ans_match.group(1).strip().replace('**', '') if ans_match else "Tidak terdeteksi"
-                    str_reward = rew_match.group(1).strip().replace('**', '') if rew_match else "Tidak terdeteksi"
-                    if "sent to your main" in str_reward.lower(): str_reward = str_reward.split("Sent to your")[0].strip()
-
-                    wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
-                    history = load_json_db(DB_FILE)
-                    
-                    is_duplicate = False
-                    if len(history) > 0:
-                        last_item = history[0]
-                        if last_item.get("answer") == str_answer and last_item.get("reward") == str_reward:
-                            is_duplicate = True
-
-                    if not is_duplicate:
-                        history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
-                        save_json_db(DB_FILE, history)
-                except: pass
-
-            if is_paused or is_triggering_c: return
-            is_triggering_c = True
-            
-            try:
-                async with self.send_lock:
-                    time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                    
-                    if bot_mode == "slow":
-                        required_wait = random.uniform(7.0, 12.0) 
-                    else:
-                        required_wait = random.uniform(5.5, 6.5)
-                    
-                    if time_since_last_send < required_wait:
-                        wait_time = required_wait - time_since_last_send
-                        await asyncio.sleep(wait_time)
-                    
-                    target_channel = self.get_channel(TARGET_CHANNEL_ID)
-                    if target_channel:
-                        try:
-                            await target_channel.send("!c")
-                            last_activity_time = datetime.now(timezone.utc)
-                            last_send_time = datetime.now(timezone.utc)
-                        except: pass
-            finally:
-                is_triggering_c = False
-            return
-
-        # =========================================================
-        # ALUR 2: MENJAWAB SOAL BARU
-        # =========================================================
-        if "60 seconds" in content_lower or "!char" in content_lower:
-            if message.id == last_answered_msg_id: return 
-            last_answered_msg_id = message.id
-            if is_paused: return
-
-            final_answer = ""
-            success = False
-
-            if "math" in content_lower:
-                try:
-                    lines = [l.strip() for l in full_text.split('\n') if l.strip()]
-                    target_line = ""
-                    for line in lines:
-                        if line.startswith("##") or ('=' in line and '?' in line):
-                            target_line = line
-                            break
-                    if target_line:
-                        expr = target_line.replace('##', '').split('=')[0].strip()
-                        expr_clean = expr.replace('×', '*').replace('x', '*').replace('X', '*')
-                        expr_clean = expr_clean.replace('²', '**2').replace('^2', '**2')
-                        expr_purified = "".join(re.findall(r'[\d\+\-\*\/\(\)\s]+', expr_clean)).strip()
-                        if expr_purified:
-                            final_answer = str(int(round(eval(expr_purified))))
-                            success = True
-                except: pass
-
-            if not success and image_urls:
-                try:
-                    for img_url in image_urls:
-                        if "flag_" in img_url:
-                            match = re.search(r'flag_([^.\?]+)', img_url)
-                            if match: final_answer = match.group(1).replace('_', ' ').title(); success = True; break
-                        elif "animal_" in img_url:
-                            match = re.search(r'animal_([^.\?]+)', img_url)
-                            if match: final_answer = match.group(1).replace('_', ' ').title(); success = True; break
-                        elif "logo_" in img_url:
-                            match = re.search(r'(logo_\d+)', img_url)
-                            if match:
-                                logo_key = match.group(1)
-                                if logo_key in LOGO_MAP: 
-                                    final_answer = LOGO_MAP[logo_key].replace('_', ' ').title()
-                                    success = True
-                                    break
-                except: pass
-
-            if not success:
-                try:
-                    cleaned_math_text = full_text.replace('×', '*').replace('²', '^2')
-                    prompt = f"Kamu adalah mesin penjawab kuis otomatis. HANYA berikan jawaban bersih intinya saja.\n\nKuis:\n{cleaned_math_text}"
-                    response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                    if response and response.text:
-                        final_answer = response.text.strip().replace('.', '')
-                        if final_answer: success = True
-                except: pass
-
-            if final_answer and success:
-                final_answer = apply_human_typing(final_answer)
-                
-                async with self.send_lock:
-                    time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                    
-                    if bot_mode == "slow":
-                        safe_buffer = 6.0 
-                        if time_since_last_send < safe_buffer:
-                            await asyncio.sleep(safe_buffer - time_since_last_send + random.uniform(0.1, 0.5))
-                        await asyncio.sleep(random.uniform(0.5, 1.5))
-                    else:
-                        await asyncio.sleep(random.uniform(1.0, 1.5))
-                        
-                    # 🛑 FITUR KESALIP: Cek jika kuis sudah diakhiri saat bot sedang menunggu delay di atas
-                    time_since_solved = (datetime.now(timezone.utc) - quiz_solved_time).total_seconds()
-                    if time_since_solved < 20.0:
-                        if random.random() < 0.25:
-                            print(f"[HUMANIZER] Kesalip! Tetap kirim '{final_answer}' (pura-pura telat ngetik).")
-                        else:
-                            print(f"[HUMANIZER] Kesalip! Membatalkan pengiriman '{final_answer}' karena sudah ada pemenang.")
-                            return
-                    
-                    try:
-                        await message.channel.send(final_answer)
-                        last_send_time = datetime.now(timezone.utc)
-                    except: pass
-
-    async def on_message(self, message):
-        await self.process_discord_event(message)
-
-    async def on_message_edit(self, before, after):
-        await self.process_discord_event(after)
-
-    # =========================================================
-    # BACKGROUND WORKER LOOP (Setiap 30 Detik)
-    # =========================================================
-    async def background_30s_loop(self):
-        global is_paused, last_activity_time, is_triggering_c, last_send_time, bot_mode
-        await self.wait_until_ready()
-        
-        while not self.is_closed():
-            await asyncio.sleep(30)
-            
-            time_since_admin = (datetime.now(timezone.utc) - last_admin_activity).total_seconds()
-            time_since_player = (datetime.now(timezone.utc) - last_player_chat_time).total_seconds()
-            
-            if bot_mode == "slow" and time_since_player >= 300.0 and time_since_admin >= 3600.0:
-                bot_mode = "fast"
-                print("[AUTO MODE] Ruangan dan Admin sepi. Kembali ke FAST MODE.")
-                
-            if is_paused or is_triggering_c: continue
-
-            time_silent = (datetime.now(timezone.utc) - last_activity_time).total_seconds()
-            if time_silent >= 90.0:
-                is_triggering_c = True
-                try:
-                    async with self.send_lock:
-                        target_channel = self.get_channel(TARGET_CHANNEL_ID)
-                        if target_channel:
-                            try:
-                                await target_channel.send("!c")
-                                last_send_time = datetime.now(timezone.utc)
-                            except: pass
-                finally:
-                    last_activity_time = datetime.now(timezone.utc)
-                    is_triggering_c = False
-
-client = MySelfBot()
-client.run(TOKEN_DISCORD)
