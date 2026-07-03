@@ -4,13 +4,14 @@ import random
 import os
 import re
 import json
+import logging
 from google import genai
 from flask import Flask, render_template_string, jsonify
 from threading import Thread
 from datetime import datetime, timedelta, timezone
 
 # =========================================================
-# 1. VARIABEL GLOBAL (STATE & TIMERS)
+# 1. VARIABEL GLOBAL (STATE, TIMERS, & MODE)
 # =========================================================
 START_TIME_UTC = datetime.now(timezone.utc)
 last_activity_time = datetime.now(timezone.utc)
@@ -19,9 +20,32 @@ last_send_time = datetime.now(timezone.utc)
 is_paused = False  
 is_triggering_c = False
 quiz_channel_id = None
+client = None  
+
+# 🛑 FITUR BARU: Mode & Rate Limit Tracker
+bot_mode = "fast" # Pilihan: "fast" atau "slow"
+rate_limit_count = 0
 
 # =========================================================
-# 2. SETUP WEB SERVER MINI & API REALTIME
+# 2. PENCEGAT LOG UNTUK MENGHITUNG RATE LIMIT (429)
+# =========================================================
+class RateLimitHandler(logging.Handler):
+    def emit(self, record):
+        global rate_limit_count
+        if record.levelno >= logging.WARNING:
+            msg = self.format(record).lower()
+            if "rate limited" in msg or "429" in msg:
+                rate_limit_count += 1
+
+# Pasang "Penyadap" ke logger HTTP bawaan discord.py
+rl_handler = RateLimitHandler()
+logging.getLogger('discord.http').addHandler(rl_handler)
+# Set logging minimal ke INFO agar tidak terlalu spam di console Render
+logging.basicConfig(level=logging.INFO)
+
+
+# =========================================================
+# 3. SETUP WEB SERVER MINI, REKAPAN HADIAH, & DASHBOARD
 # =========================================================
 app = Flask('')
 DB_FILE = "loot_history.json"
@@ -47,83 +71,59 @@ HTML_TEMPLATE = """
     <style>
         body { 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background-color: #1e1e24; 
-            color: #fff; 
-            margin: 0; 
-            padding: 20px; 
-            height: 100vh; /* Kunci ukuran web sebesar layar */
-            box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden; /* Hilangkan scroll bar utama web */
+            background-color: #1e1e24; color: #fff; margin: 0; padding: 20px; 
+            height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden;
         }
         h2 { 
-            color: #5865F2; 
-            border-bottom: 2px solid #5865F2; 
-            padding-bottom: 10px; 
-            margin-top: 0;
-            display: flex; justify-content: space-between; align-items: center; 
-            flex-shrink: 0;
+            color: #5865F2; border-bottom: 2px solid #5865F2; padding-bottom: 10px; margin-top: 0;
+            display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
         }
         
-        /* Stats Box */
         .stats-box { 
             background-color: #2f3136; padding: 15px; border-radius: 8px; 
-            margin-bottom: 15px; border-left: 4px solid #43b581; 
-            flex-shrink: 0;
+            margin-bottom: 15px; border-left: 4px solid #43b581; flex-shrink: 0;
         }
         .stats-info p { margin: 5px 0; font-size: 0.95em; color: #dcddde; }
         .stats-info strong { color: #fff; }
         
         .stats-grid { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); 
-            gap: 10px; 
-            margin-top: 15px; 
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); 
+            gap: 10px; margin-top: 15px; 
         }
         .stat-item { 
             background: #202225; padding: 10px; border-radius: 5px; 
             text-align: center; font-size: 0.9em; color: #b9bbbe; 
         }
-        .stat-item span { 
-            display: block; font-size: 1.4em; font-weight: bold; color: #faa61a; margin-top: 5px;
-        }
+        .stat-item span { display: block; font-size: 1.4em; font-weight: bold; color: #faa61a; margin-top: 5px; }
 
-        /* Web Control Styles */
         .control-panel { 
             margin-top: 15px; padding-top: 15px; border-top: 1px solid #4f545c; 
-            display: flex; align-items: center; justify-content: space-between; 
+            display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
         }
-        .status-badge { font-weight: bold; padding: 5px 10px; border-radius: 5px; background-color: #202225; }
-        .btn { border: none; padding: 10px 20px; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 1em; }
+        .control-info { display: flex; flex-direction: column; gap: 5px; }
+        .status-badge { font-weight: bold; padding: 3px 8px; border-radius: 5px; background-color: #202225; }
+        .btn { border: none; padding: 10px 15px; border-radius: 5px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9em; }
+        
         .btn-start { background-color: #43b581; color: white; }
         .btn-start:hover { background-color: #3ca374; }
         .btn-pause { background-color: #ed4245; color: white; }
         .btn-pause:hover { background-color: #d83c3e; }
+        
+        .btn-mode { background-color: #5865F2; color: white; }
+        .btn-mode:hover { background-color: #4752c4; }
+        
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-        /* Table Container (Scrollable) */
-        .table-container { 
-            flex-grow: 1; 
-            overflow-y: auto; 
-            background-color: #2f3136; 
-            border-radius: 8px; 
-            position: relative;
-        }
+        .table-container { flex-grow: 1; overflow-y: auto; background-color: #2f3136; border-radius: 8px; position: relative; }
         table { width: 100%; border-collapse: collapse; }
         thead th { 
-            position: sticky; top: 0; 
-            background-color: #5865F2; 
-            color: white; 
-            z-index: 1; 
-            padding: 12px; text-align: left;
-            box-shadow: 0 2px 2px -1px rgba(0,0,0,0.4);
+            position: sticky; top: 0; background-color: #5865F2; color: white; 
+            z-index: 1; padding: 12px; text-align: left; box-shadow: 0 2px 2px -1px rgba(0,0,0,0.4);
         }
         tbody td { padding: 12px; text-align: left; border-bottom: 1px solid #202225; }
         tr:hover { background-color: #35383e; }
         .reward { color: #43b581; font-weight: bold; }
         
-        /* Custom Scrollbar for aesthetic */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #202225; border-radius: 8px; }
         ::-webkit-scrollbar-thumb { background: #4f545c; border-radius: 8px; }
@@ -148,10 +148,15 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="control-panel">
-            <div>
-                🤖 <strong>Bot Status:</strong> <span id="status-badge" class="status-badge">Loading...</span>
+            <div class="control-info">
+                <div>🤖 <strong>Status:</strong> <span id="status-badge" class="status-badge">Loading...</span></div>
+                <div>⚡ <strong>Speed:</strong> <span id="mode-badge" class="status-badge">Loading...</span></div>
+                <div>⚠️ <strong>Rate Limits Hit:</strong> <span id="rl-badge" class="status-badge" style="color:#ed4245;">0</span></div>
             </div>
-            <button id="toggle-btn" class="btn" onclick="toggleBot()">⏳ Loading</button>
+            <div>
+                <button id="toggle-mode-btn" class="btn btn-mode" onclick="toggleMode()">⚙️ CHANGE MODE</button>
+                <button id="toggle-btn" class="btn" onclick="toggleBot()">⏳ Loading</button>
+            </div>
         </div>
     </div>
 
@@ -167,28 +172,25 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
-        let currentLootCount = -1; // Detektor perubahan agar tabel tak lompat ke atas
+        let currentLootCount = -1; 
 
         async function fetchAllData() {
             try {
                 let res = await fetch('/api/data');
                 let data = await res.json();
                 
-                // Update Teks Info
                 document.getElementById('start-str').innerText = data.start_str;
                 document.getElementById('uptime-str').innerText = data.uptime_str;
                 
-                // Update Metrik
                 document.getElementById('val-xp').innerText = data.total_xp + " %";
                 document.getElementById('val-gold').innerText = data.total_gold;
                 document.getElementById('val-token').innerText = data.total_token;
                 document.getElementById('val-tp').innerText = data.total_tp;
                 document.getElementById('val-rare').innerText = data.rare_count + "x";
+                document.getElementById('rl-badge').innerText = data.rate_limit_count;
 
-                // Update Status UI
-                updateUI(data.paused);
+                updateUI(data.paused, data.mode);
                 
-                // Update Tabel HANYA JIKA ada data baru masuk
                 if (data.loots.length !== currentLootCount) {
                     let html = "";
                     if (data.loots.length === 0) {
@@ -209,36 +211,45 @@ HTML_TEMPLATE = """
         async function toggleBot() {
             let btn = document.getElementById('toggle-btn');
             btn.disabled = true;
-            btn.innerText = "⏳ Processing...";
             try {
                 let res = await fetch('/api/toggle', { method: 'POST' });
                 let data = await res.json();
-                updateUI(data.paused);
-            } catch (error) {
-                console.error("Gagal mengubah status bot:", error);
-                alert("Gagal menghubungi server!");
-            }
+                updateUI(data.paused, data.mode);
+            } catch (error) { alert("Gagal menghubungi server!"); }
             btn.disabled = false;
         }
 
-        function updateUI(isPaused) {
-            let badge = document.getElementById('status-badge');
+        async function toggleMode() {
+            let btn = document.getElementById('toggle-mode-btn');
+            btn.disabled = true;
+            try {
+                let res = await fetch('/api/toggle_mode', { method: 'POST' });
+                let data = await res.json();
+                updateUI(data.paused, data.mode);
+            } catch (error) { alert("Gagal mengubah mode!"); }
+            btn.disabled = false;
+        }
+
+        function updateUI(isPaused, botMode) {
+            let badgeStatus = document.getElementById('status-badge');
+            let badgeMode = document.getElementById('mode-badge');
             let btn = document.getElementById('toggle-btn');
             
             if (isPaused) {
-                badge.innerHTML = "😴 PAUSED";
-                badge.style.color = "#ed4245";
-                btn.className = "btn btn-start";
-                btn.innerHTML = "▶️ START BOT";
+                badgeStatus.innerHTML = "😴 PAUSED"; badgeStatus.style.color = "#ed4245";
+                btn.className = "btn btn-start"; btn.innerHTML = "▶️ START BOT";
             } else {
-                badge.innerHTML = "🚀 RUNNING";
-                badge.style.color = "#43b581";
-                btn.className = "btn btn-pause";
-                btn.innerHTML = "⏸️ PAUSE BOT";
+                badgeStatus.innerHTML = "🚀 RUNNING"; badgeStatus.style.color = "#43b581";
+                btn.className = "btn btn-pause"; btn.innerHTML = "⏸️ PAUSE BOT";
+            }
+
+            if (botMode === "fast") {
+                badgeMode.innerHTML = "🏎️ FAST MODE (0.5s - 5s)"; badgeMode.style.color = "#faa61a";
+            } else {
+                badgeMode.innerHTML = "🐢 SLOW MODE (6s - 12s)"; badgeMode.style.color = "#b9bbbe";
             }
         }
 
-        // Jalankan fetch 5 detik sekali
         fetchAllData();
         setInterval(fetchAllData, 5000);
     </script>
@@ -248,7 +259,6 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def home():
-    # Halaman HTML statis karena data ditarik via AJAX JSON
     return render_template_string(HTML_TEMPLATE)
 
 @app.route('/api/data', methods=['GET'])
@@ -277,8 +287,6 @@ def get_data():
             loot_time = datetime.strptime(loot["time"], '%Y-%m-%d %H:%M:%S')
             if loot_time >= start_time_naive:
                 rew = loot["reward"].lower()
-                
-                # Helper Regex Ekstraktor (Otomatis bersihkan titik/koma)
                 def extract_val(pattern):
                     m = re.search(pattern, rew)
                     if m:
@@ -290,9 +298,7 @@ def get_data():
                 total_gold += extract_val(r'([\d,\.]+)\s*gold')
                 total_token += extract_val(r'([\d,\.]+)\s*token')
                 total_tp += extract_val(r'([\d,\.]+)\s*tp')
-                
-                if "rare" in rew:
-                    rare_count += 1
+                if "rare" in rew: rare_count += 1
         except: pass
 
     return jsonify({
@@ -304,19 +310,31 @@ def get_data():
         "total_tp": total_tp,
         "rare_count": rare_count,
         "loots": loots,
-        "paused": is_paused
+        "paused": is_paused,
+        "mode": bot_mode,
+        "rate_limit_count": rate_limit_count
     })
 
 @app.route('/api/toggle', methods=['POST'])
 def toggle_state():
-    global is_paused, last_activity_time
+    global is_paused, last_activity_time, client
     is_paused = not is_paused
     if not is_paused:
         last_activity_time = datetime.now(timezone.utc)
         print("[WEB CONTROL] Bot AKTIF kembali.")
+        if client and client.loop and client.is_ready():
+            try: asyncio.run_coroutine_threadsafe(client.trigger_manual_c(), client.loop)
+            except: pass
     else:
         print("[WEB CONTROL] Bot memasuki mode PAUSE.")
-    return jsonify({"paused": is_paused})
+    return jsonify({"paused": is_paused, "mode": bot_mode})
+
+@app.route('/api/toggle_mode', methods=['POST'])
+def toggle_mode():
+    global bot_mode
+    bot_mode = "slow" if bot_mode == "fast" else "fast"
+    print(f"[WEB CONTROL] Mode diubah menjadi: {bot_mode.upper()}")
+    return jsonify({"paused": is_paused, "mode": bot_mode})
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -325,7 +343,7 @@ def run_web_server():
 Thread(target=run_web_server).start()
 
 # =========================================================
-# 3. DICTIONARY CHEAT CODE LOGO BRAND
+# 4. DICTIONARY CHEAT CODE LOGO BRAND
 # =========================================================
 LOGO_MAP = {
     # 1 - 99
@@ -338,15 +356,11 @@ LOGO_MAP = {
     "logo_37": "monster", "logo_38": "pizza hut", "logo_39": "android", "logo_40": "adobe",
     "logo_41": "chrome", "logo_42": "gmail", "logo_44": "twitter", "logo_45": "starbucks",
     "logo_46": "xbox",
-
-    # 100 - 199
     "logo_101": "chanel", "logo_107": "champion", "logo_108": "lv", "logo_110": "levis",
     "logo_111": "rolex", "logo_112": "dickies", "logo_114": "columbia", "logo_116": "hermes",
     "logo_117": "palace", "logo_118": "kappa", "logo_119": "burberry", "logo_120": "puma",
     "logo_121": "reebok", "logo_125": "diesel", "logo_126": "fila", "logo_127": "versace",
     "logo_129": "hollister", "logo_133": "nike", "logo_136": "ck", "logo_138": "fred perry",
-
-    # 200 - 299
     "logo_201": "apple", "logo_202": "dolby", "logo_203": "philips", "logo_204": "alibaba",
     "logo_206": "cisco", "logo_207": "intel", "logo_208": "adobe", "logo_209": "alcatel",
     "logo_210": "amazon", "logo_211": "amd", "logo_212": "asus", "logo_214": "dell",
@@ -356,8 +370,6 @@ LOGO_MAP = {
     "logo_228": "seagate", "logo_229": "ericsson", "logo_230": "beats", "logo_231": "xiaomi",
     "logo_232": "uber", "logo_233": "youtube", "logo_234": "twitter", "logo_235": "Blackberry",
     "logo_236": "dropbox", "logo_237": "facebook", "logo_238": "google", "logo_239": "snapchat",
-
-    # 300 - 399
     "logo_301": "netflix", "logo_302": "nintendo", "logo_303": "universal", "logo_304": "walking dead",
     "logo_305": "gameloft", "logo_306": "game of thrones", "logo_307": "discovery", "logo_308": "monopoly",
     "logo_309": "konami", "logo_311": "bandai", "logo_313": "warner bros", "logo_314": "rockstar",
@@ -366,8 +378,6 @@ LOGO_MAP = {
     "logo_329": "sega", "logo_330": "star wars", "logo_331": "tencent", "logo_332": "terminator",
     "logo_333": "tiktok", "logo_334": "titanic", "logo_335": "soundcloud", "logo_336": "ubisoft",
     "logo_337": "lego", "logo_338": "discord", "logo_339": "spotify",
-
-    # 400 - 499
     "logo_402": "cadillac", "logo_403": "chevrolet", "logo_404": "mini", "logo_405": "porsche",
     "logo_406": "citroen", "logo_408": "infiniti", "logo_409": "jaguar", "logo_410": "volkswagen",
     "logo_411": "lexus", "logo_412": "peugeot", "logo_413": "mitsubishi", "logo_414": "suzuki",
@@ -376,13 +386,11 @@ LOGO_MAP = {
     "logo_424": "honda", "logo_425": "hyundai", "logo_426": "koenigsegg", "logo_430": "mazda",
     "logo_431": "nissan", "logo_432": "opel", "logo_433": "renault", "logo_435": "seat",
     "logo_437": "subaru", "logo_438": "volvo", "logo_439": "bmw",
-
-    # 500+
     "logo_501": "harley", "logo_502": "nescafe"
 }
 
 # =========================================================
-# 4. CORE CODE SELF-BOT DISCORD & GEMINI CONFIG
+# 5. CORE CODE SELF-BOT DISCORD & GEMINI CONFIG
 # =========================================================
 TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
 API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
@@ -401,15 +409,29 @@ class MySelfBot(discord.Client):
         self.send_lock = None
 
     async def on_ready(self):
+        global client
+        client = self
         if self.send_lock is None:
             self.send_lock = asyncio.Lock()
             
         print(f'Self-bot aktif sebagai: {self.user}')
-        print(f'=== ANTI-BURST & ANTI-SLOWMODE (5s) AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===')
+        print(f'=== MULTI-MODE & DASHBOARD AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===')
         self.loop.create_task(self.background_30s_loop())
 
+    async def trigger_manual_c(self):
+        global last_activity_time, last_send_time
+        if not self.is_ready() or is_paused: return
+        async with self.send_lock:
+            target_channel = self.get_channel(TARGET_CHANNEL_ID)
+            if target_channel:
+                try:
+                    await target_channel.send("!c")
+                    last_activity_time = datetime.now(timezone.utc)
+                    last_send_time = datetime.now(timezone.utc)
+                except Exception as e: print(f"[START ERROR] Gagal memicu !c: {e}")
+
     async def on_message(self, message):
-        global is_paused, last_activity_time, is_triggering_c, last_send_time
+        global is_paused, last_activity_time, is_triggering_c, last_send_time, bot_mode
         
         # --- SAKLAR REMOTE CONTROL (DISCORD CHAT) ---
         if message.author.id == self.user.id:
@@ -421,21 +443,18 @@ class MySelfBot(discord.Client):
                 is_paused = False
                 print("[REMOTE CONTROL] Terdeteksi 'capek'. Bot AKTIF kembali.")
                 last_activity_time = datetime.now(timezone.utc)
+                self.loop.create_task(self.trigger_manual_c())
             return
 
-        # 🛑 FILTER 1: Hanya dengarkan pesan di TARGET_CHANNEL_ID dari LionNSEX
         if message.channel.id != TARGET_CHANNEL_ID: return
         if message.author.id != TARGET_USER_ID: return
         
-        # 🛑 FILTER 2 (ANTI BURST): Abaikan pesan basi peninggalan masa lalu
+        # 🛑 FILTER ANTI BURST: Abaikan pesan lebih dari 15 detik yg lalu
         try:
             msg_date = message.created_at
-            if msg_date.tzinfo is None:
-                msg_date = msg_date.replace(tzinfo=timezone.utc)
-            if (datetime.now(timezone.utc) - msg_date).total_seconds() > 15.0:
-                return
-        except:
-            pass
+            if msg_date.tzinfo is None: msg_date = msg_date.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - msg_date).total_seconds() > 15.0: return
+        except: pass
 
         last_activity_time = datetime.now(timezone.utc)
 
@@ -451,8 +470,7 @@ class MySelfBot(discord.Client):
                 if embed.footer and embed.footer.text: full_text += embed.footer.text + "\n"
                 if embed.image and embed.image.url: image_url = embed.image.url
 
-        if message.content:
-            full_text += "\n" + message.content
+        if message.content: full_text += "\n" + message.content
 
         content_lower = full_text.lower()
 
@@ -474,18 +492,14 @@ class MySelfBot(discord.Client):
                         if line.startswith("##") or ('=' in line and '?' in line):
                             target_line = line
                             break
-                    
                     if target_line:
                         expr = target_line.replace('##', '').split('=')[0].strip()
                         expr_clean = expr.replace('×', '*').replace('x', '*').replace('X', '*')
                         expr_clean = expr_clean.replace('²', '**2').replace('^2', '**2')
                         expr_purified = "".join(re.findall(r'[\d\+\-\*\/\(\)\s]+', expr_clean)).strip()
-                        
                         if expr_purified:
-                            hasil_lokal = eval(expr_purified)
-                            final_answer = str(int(round(hasil_lokal)))
+                            final_answer = str(int(round(eval(expr_purified))))
                             success = True
-                            print(f"[MATH LOCAL] Berhasil hitung: {final_answer}")
                 except Exception as math_err:
                     print(f"[MATH ERROR] Dialihkan ke Gemini: {math_err}")
 
@@ -517,18 +531,22 @@ class MySelfBot(discord.Client):
             if final_answer and success:
                 async with self.send_lock:
                     time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                    safe_buffer = 6.0 
                     
-                    if time_since_last_send < safe_buffer:
-                        delay = safe_buffer - time_since_last_send + random.uniform(0.1, 0.5)
-                        print(f"[SLOWMODE GUARD] Menunda pengiriman jawaban selama {delay:.2f} detik...")
-                        await asyncio.sleep(delay)
+                    if bot_mode == "slow":
+                        safe_buffer = 6.0 
+                        if time_since_last_send < safe_buffer:
+                            delay = safe_buffer - time_since_last_send + random.uniform(0.1, 0.5)
+                            print(f"[SLOWMODE GUARD] Menunda kirim jawaban selama {delay:.2f} detik...")
+                            await asyncio.sleep(delay)
+                        await asyncio.sleep(random.uniform(0.5, 1.5))
+                    else:
+                        # FAST MODE: Sangat agresif, jeda 0.5 - 1.0 detik setelah soal keluar
+                        await asyncio.sleep(random.uniform(0.5, 1.0))
                     
                     try:
-                        await asyncio.sleep(random.uniform(0.5, 1.5))
                         await message.channel.send(final_answer)
                         last_send_time = datetime.now(timezone.utc)
-                        print(f"[SPEED] Mengirim jawaban: '{final_answer}'")
+                        print(f"[SPEED] Mengirim jawaban ({bot_mode.upper()} mode): '{final_answer}'")
                     except Exception as e:
                         print(f"[ERROR SEND JAWABAN] {e}")
                 return
@@ -543,11 +561,8 @@ class MySelfBot(discord.Client):
                 try:
                     ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                     rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                    
-                    # 🛑 Membersihkan lambang Markdown Bintang (**) secara mutlak
                     str_answer = ans_match.group(1).strip().replace('**', '') if ans_match else "Tidak terdeteksi"
                     str_reward = rew_match.group(1).strip().replace('**', '') if rew_match else "Tidak terdeteksi"
-                    
                     if "sent to your main" in str_reward.lower():
                         str_reward = str_reward.split("Sent to your")[0].strip()
 
@@ -558,26 +573,28 @@ class MySelfBot(discord.Client):
                 except: pass
 
             if is_paused or is_triggering_c: return
-
             is_triggering_c = True
             
             async with self.send_lock:
                 time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                required_wait = random.uniform(7.0, 12.0) 
+                
+                if bot_mode == "slow":
+                    required_wait = random.uniform(7.0, 12.0) 
+                else:
+                    # FAST MODE: Menunggu cooldown bot 5 detik
+                    required_wait = random.uniform(5.1, 6.0)
                 
                 if time_since_last_send < required_wait:
                     wait_time = required_wait - time_since_last_send
-                    print(f"[COOLDOWN GUARD] Menunggu {wait_time:.2f} detik sebelum !c berikutnya...")
                     await asyncio.sleep(wait_time)
                 
                 target_channel = self.get_channel(TARGET_CHANNEL_ID)
                 if target_channel:
                     try:
-                        print("[ACTION] Mencoba mengirim !c...")
                         await target_channel.send("!c")
                         last_activity_time = datetime.now(timezone.utc)
                         last_send_time = datetime.now(timezone.utc)
-                        print("[FAST TRACK SUCCESS] !c berhasil dikirim dengan instan.")
+                        print(f"[FAST TRACK SUCCESS] !c dikirim via {bot_mode.upper()} mode.")
                     except Exception as e:
                         last_activity_time = datetime.now(timezone.utc)
                         print(f"[FAILED TO SEND !c] Terkena error: {e}")
@@ -593,15 +610,12 @@ class MySelfBot(discord.Client):
         
         while not self.is_closed():
             await asyncio.sleep(30)
-            
-            if is_paused or is_triggering_c:
-                continue
+            if is_paused or is_triggering_c: continue
 
             time_silent = (datetime.now(timezone.utc) - last_activity_time).total_seconds()
-            
             if time_silent >= 90.0:
                 is_triggering_c = True
-                print(f"[BACKGROUND] Sepi selama {int(time_silent)} detik. Memancing !c baru...")
+                print(f"[BACKGROUND] Sepi {int(time_silent)} detik. Memancing !c ...")
                 
                 async with self.send_lock:
                     target_channel = self.get_channel(TARGET_CHANNEL_ID)
