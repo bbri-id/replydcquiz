@@ -22,7 +22,7 @@ is_triggering_c = False
 quiz_channel_id = None
 client = None  
 
-# 🛑 FITUR BARU: Mode & Rate Limit Tracker
+# 🛑 Mode & Rate Limit Tracker
 bot_mode = "fast" # Pilihan: "fast" atau "slow"
 rate_limit_count = 0
 
@@ -37,12 +37,9 @@ class RateLimitHandler(logging.Handler):
             if "rate limited" in msg or "429" in msg:
                 rate_limit_count += 1
 
-# Pasang "Penyadap" ke logger HTTP bawaan discord.py
 rl_handler = RateLimitHandler()
 logging.getLogger('discord.http').addHandler(rl_handler)
-# Set logging minimal ke INFO agar tidak terlalu spam di console Render
 logging.basicConfig(level=logging.INFO)
-
 
 # =========================================================
 # 3. SETUP WEB SERVER MINI, REKAPAN HADIAH, & DASHBOARD
@@ -274,12 +271,7 @@ def get_data():
     start_str = start_time_wib.strftime('%d %B %Y %H.%M WIB')
     uptime_str = f"{hours} Hours {minutes} Minutes"
     
-    total_xp = 0
-    total_gold = 0
-    total_token = 0
-    total_tp = 0
-    rare_count = 0
-    
+    total_xp = total_gold = total_token = total_tp = rare_count = 0
     start_time_naive = start_time_wib.replace(tzinfo=None) 
     
     for loot in loots:
@@ -356,11 +348,15 @@ LOGO_MAP = {
     "logo_37": "monster", "logo_38": "pizza hut", "logo_39": "android", "logo_40": "adobe",
     "logo_41": "chrome", "logo_42": "gmail", "logo_44": "twitter", "logo_45": "starbucks",
     "logo_46": "xbox",
+
+    # 100 - 199
     "logo_101": "chanel", "logo_107": "champion", "logo_108": "lv", "logo_110": "levis",
     "logo_111": "rolex", "logo_112": "dickies", "logo_114": "columbia", "logo_116": "hermes",
     "logo_117": "palace", "logo_118": "kappa", "logo_119": "burberry", "logo_120": "puma",
     "logo_121": "reebok", "logo_125": "diesel", "logo_126": "fila", "logo_127": "versace",
     "logo_129": "hollister", "logo_133": "nike", "logo_136": "ck", "logo_138": "fred perry",
+
+    # 200 - 299
     "logo_201": "apple", "logo_202": "dolby", "logo_203": "philips", "logo_204": "alibaba",
     "logo_206": "cisco", "logo_207": "intel", "logo_208": "adobe", "logo_209": "alcatel",
     "logo_210": "amazon", "logo_211": "amd", "logo_212": "asus", "logo_214": "dell",
@@ -370,6 +366,8 @@ LOGO_MAP = {
     "logo_228": "seagate", "logo_229": "ericsson", "logo_230": "beats", "logo_231": "xiaomi",
     "logo_232": "uber", "logo_233": "youtube", "logo_234": "twitter", "logo_235": "Blackberry",
     "logo_236": "dropbox", "logo_237": "facebook", "logo_238": "google", "logo_239": "snapchat",
+
+    # 300 - 399
     "logo_301": "netflix", "logo_302": "nintendo", "logo_303": "universal", "logo_304": "walking dead",
     "logo_305": "gameloft", "logo_306": "game of thrones", "logo_307": "discovery", "logo_308": "monopoly",
     "logo_309": "konami", "logo_311": "bandai", "logo_313": "warner bros", "logo_314": "rockstar",
@@ -378,6 +376,8 @@ LOGO_MAP = {
     "logo_329": "sega", "logo_330": "star wars", "logo_331": "tencent", "logo_332": "terminator",
     "logo_333": "tiktok", "logo_334": "titanic", "logo_335": "soundcloud", "logo_336": "ubisoft",
     "logo_337": "lego", "logo_338": "discord", "logo_339": "spotify",
+
+    # 400 - 499
     "logo_402": "cadillac", "logo_403": "chevrolet", "logo_404": "mini", "logo_405": "porsche",
     "logo_406": "citroen", "logo_408": "infiniti", "logo_409": "jaguar", "logo_410": "volkswagen",
     "logo_411": "lexus", "logo_412": "peugeot", "logo_413": "mitsubishi", "logo_414": "suzuki",
@@ -386,6 +386,8 @@ LOGO_MAP = {
     "logo_424": "honda", "logo_425": "hyundai", "logo_426": "koenigsegg", "logo_430": "mazda",
     "logo_431": "nissan", "logo_432": "opel", "logo_433": "renault", "logo_435": "seat",
     "logo_437": "subaru", "logo_438": "volvo", "logo_439": "bmw",
+
+    # 500+
     "logo_501": "harley", "logo_502": "nescafe"
 }
 
@@ -430,7 +432,8 @@ class MySelfBot(discord.Client):
                     last_send_time = datetime.now(timezone.utc)
                 except Exception as e: print(f"[START ERROR] Gagal memicu !c: {e}")
 
-    async def on_message(self, message):
+    # Fungsi sentral untuk mendengarkan pesan baru dan pesan yang diedit
+    async def process_discord_event(self, message):
         global is_paused, last_activity_time, is_triggering_c, last_send_time, bot_mode
         
         # --- SAKLAR REMOTE CONTROL (DISCORD CHAT) ---
@@ -449,11 +452,11 @@ class MySelfBot(discord.Client):
         if message.channel.id != TARGET_CHANNEL_ID: return
         if message.author.id != TARGET_USER_ID: return
         
-        # 🛑 FILTER ANTI BURST: Abaikan pesan lebih dari 15 detik yg lalu
+        # 🛑 FILTER ANTI BURST (Abaikan pesan masa lalu)
         try:
             msg_date = message.created_at
             if msg_date.tzinfo is None: msg_date = msg_date.replace(tzinfo=timezone.utc)
-            if (datetime.now(timezone.utc) - msg_date).total_seconds() > 15.0: return
+            if (datetime.now(timezone.utc) - msg_date).total_seconds() > 60.0: return
         except: pass
 
         last_activity_time = datetime.now(timezone.utc)
@@ -471,11 +474,64 @@ class MySelfBot(discord.Client):
                 if embed.image and embed.image.url: image_url = embed.image.url
 
         if message.content: full_text += "\n" + message.content
-
         content_lower = full_text.lower()
 
         # =========================================================
-        # ALUR 1: MENJAWAB SOAL BARU
+        # ALUR 1: DETEKSI KUIS SELESAI (CEK INI LEBIH DULU!)
+        # =========================================================
+        is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower or "challenge solved" in content_lower or "time's up!" in content_lower
+
+        if is_quiz_ended:
+            if "msdn" in content_lower:
+                try:
+                    ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                    rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                    str_answer = ans_match.group(1).strip().replace('**', '') if ans_match else "Tidak terdeteksi"
+                    str_reward = rew_match.group(1).strip().replace('**', '') if rew_match else "Tidak terdeteksi"
+                    if "sent to your main" in str_reward.lower():
+                        str_reward = str_reward.split("Sent to your")[0].strip()
+
+                    wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
+                    history = load_loot_history()
+                    history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
+                    save_loot_history(history)
+                except: pass
+
+            if is_paused or is_triggering_c: return
+            is_triggering_c = True
+            
+            try:
+                async with self.send_lock:
+                    time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
+                    
+                    if bot_mode == "slow":
+                        required_wait = random.uniform(7.0, 12.0) 
+                    else:
+                        required_wait = random.uniform(5.1, 6.0)
+                    
+                    if time_since_last_send < required_wait:
+                        wait_time = required_wait - time_since_last_send
+                        await asyncio.sleep(wait_time)
+                    
+                    target_channel = self.get_channel(TARGET_CHANNEL_ID)
+                    if target_channel:
+                        try:
+                            await target_channel.send("!c")
+                            last_activity_time = datetime.now(timezone.utc)
+                            last_send_time = datetime.now(timezone.utc)
+                            print(f"[FAST TRACK SUCCESS] !c dikirim via {bot_mode.upper()} mode.")
+                        except Exception as e:
+                            last_activity_time = datetime.now(timezone.utc)
+                            print(f"[FAILED TO SEND !c] Terkena error: {e}")
+            finally:
+                # 🛑 PENGAMAN MUTLAK: Reset saklar meskipun ada error saat proses pengiriman di atas
+                is_triggering_c = False
+            
+            # Sangat Penting: Stop proses di sini jika kuis memang sudah selesai!
+            return
+
+        # =========================================================
+        # ALUR 2: MENJAWAB SOAL BARU (Hanya jika kuis belum selesai)
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
             if is_paused: return
@@ -540,7 +596,7 @@ class MySelfBot(discord.Client):
                             await asyncio.sleep(delay)
                         await asyncio.sleep(random.uniform(0.5, 1.5))
                     else:
-                        # FAST MODE: Sangat agresif, jeda 0.5 - 1.0 detik setelah soal keluar
+                        # FAST MODE: Sangat agresif, jeda pendek setelah soal keluar
                         await asyncio.sleep(random.uniform(0.5, 1.0))
                     
                     try:
@@ -549,57 +605,14 @@ class MySelfBot(discord.Client):
                         print(f"[SPEED] Mengirim jawaban ({bot_mode.upper()} mode): '{final_answer}'")
                     except Exception as e:
                         print(f"[ERROR SEND JAWABAN] {e}")
-                return
 
-        # =========================================================
-        # ALUR 2: KUIS SELESAI / TIMEOUT -> TRIGGGER !C AMAN
-        # =========================================================
-        is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower or "challenge solved" in content_lower or "time's up!" in content_lower
+    # Hook untuk pesan baru
+    async def on_message(self, message):
+        await self.process_discord_event(message)
 
-        if is_quiz_ended:
-            if "msdn" in content_lower:
-                try:
-                    ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                    rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
-                    str_answer = ans_match.group(1).strip().replace('**', '') if ans_match else "Tidak terdeteksi"
-                    str_reward = rew_match.group(1).strip().replace('**', '') if rew_match else "Tidak terdeteksi"
-                    if "sent to your main" in str_reward.lower():
-                        str_reward = str_reward.split("Sent to your")[0].strip()
-
-                    wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
-                    history = load_loot_history()
-                    history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
-                    save_loot_history(history)
-                except: pass
-
-            if is_paused or is_triggering_c: return
-            is_triggering_c = True
-            
-            async with self.send_lock:
-                time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                
-                if bot_mode == "slow":
-                    required_wait = random.uniform(7.0, 12.0) 
-                else:
-                    # FAST MODE: Menunggu cooldown bot 5 detik
-                    required_wait = random.uniform(5.1, 6.0)
-                
-                if time_since_last_send < required_wait:
-                    wait_time = required_wait - time_since_last_send
-                    await asyncio.sleep(wait_time)
-                
-                target_channel = self.get_channel(TARGET_CHANNEL_ID)
-                if target_channel:
-                    try:
-                        await target_channel.send("!c")
-                        last_activity_time = datetime.now(timezone.utc)
-                        last_send_time = datetime.now(timezone.utc)
-                        print(f"[FAST TRACK SUCCESS] !c dikirim via {bot_mode.upper()} mode.")
-                    except Exception as e:
-                        last_activity_time = datetime.now(timezone.utc)
-                        print(f"[FAILED TO SEND !c] Terkena error: {e}")
-                        
-            is_triggering_c = False
+    # 🛑 FITUR BARU: Hook untuk mendeteksi pesan yang diedit oleh LionNSEX
+    async def on_message_edit(self, before, after):
+        await self.process_discord_event(after)
 
     # =========================================================
     # BACKGROUND WORKER LOOP (Setiap 30 Detik)
@@ -616,18 +629,18 @@ class MySelfBot(discord.Client):
             if time_silent >= 90.0:
                 is_triggering_c = True
                 print(f"[BACKGROUND] Sepi {int(time_silent)} detik. Memancing !c ...")
-                
-                async with self.send_lock:
-                    target_channel = self.get_channel(TARGET_CHANNEL_ID)
-                    if target_channel:
-                        try:
-                            await target_channel.send("!c")
-                            last_send_time = datetime.now(timezone.utc)
-                        except Exception as e:
-                            print(f"[BACKGROUND ERROR] {e}")
-                
-                last_activity_time = datetime.now(timezone.utc)
-                is_triggering_c = False
+                try:
+                    async with self.send_lock:
+                        target_channel = self.get_channel(TARGET_CHANNEL_ID)
+                        if target_channel:
+                            try:
+                                await target_channel.send("!c")
+                                last_send_time = datetime.now(timezone.utc)
+                            except Exception as e:
+                                print(f"[BACKGROUND ERROR] {e}")
+                finally:
+                    last_activity_time = datetime.now(timezone.utc)
+                    is_triggering_c = False
 
 client = MySelfBot()
 client.run(TOKEN_DISCORD)
