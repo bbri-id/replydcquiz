@@ -11,7 +11,7 @@ from threading import Thread
 from datetime import datetime, timedelta, timezone
 
 # =========================================================
-# 1. VARIABEL GLOBAL (STATE, TIMERS, & MODE)
+# 1. VARIABEL GLOBAL (STATE, TIMERS, MODE & MEMORY)
 # =========================================================
 START_TIME_UTC = datetime.now(timezone.utc)
 last_activity_time = datetime.now(timezone.utc)
@@ -22,9 +22,12 @@ is_triggering_c = False
 quiz_channel_id = None
 client = None  
 
-# 🛑 Mode & Rate Limit Tracker
 bot_mode = "fast" # Pilihan: "fast" atau "slow"
 rate_limit_count = 0
+
+# 🛑 INGATAN ID PESAN UNTUK MENCEGAH DOUBLE ANSWER (ON_MESSAGE_EDIT BUG)
+last_answered_msg_id = None
+last_solved_msg_id = None
 
 # =========================================================
 # 2. PENCEGAT LOG UNTUK MENGHITUNG RATE LIMIT (429)
@@ -241,7 +244,7 @@ HTML_TEMPLATE = """
             }
 
             if (botMode === "fast") {
-                badgeMode.innerHTML = "🏎️ FAST MODE (0.5s - 5s)"; badgeMode.style.color = "#faa61a";
+                badgeMode.innerHTML = "🏎️ FAST MODE (1.0s - 6.5s)"; badgeMode.style.color = "#faa61a";
             } else {
                 badgeMode.innerHTML = "🐢 SLOW MODE (6s - 12s)"; badgeMode.style.color = "#b9bbbe";
             }
@@ -432,11 +435,10 @@ class MySelfBot(discord.Client):
                     last_send_time = datetime.now(timezone.utc)
                 except Exception as e: print(f"[START ERROR] Gagal memicu !c: {e}")
 
-    # Fungsi sentral untuk mendengarkan pesan baru dan pesan yang diedit
     async def process_discord_event(self, message):
         global is_paused, last_activity_time, is_triggering_c, last_send_time, bot_mode
+        global last_answered_msg_id, last_solved_msg_id
         
-        # --- SAKLAR REMOTE CONTROL (DISCORD CHAT) ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
@@ -452,7 +454,6 @@ class MySelfBot(discord.Client):
         if message.channel.id != TARGET_CHANNEL_ID: return
         if message.author.id != TARGET_USER_ID: return
         
-        # 🛑 FILTER ANTI BURST (Abaikan pesan masa lalu)
         try:
             msg_date = message.created_at
             if msg_date.tzinfo is None: msg_date = msg_date.replace(tzinfo=timezone.utc)
@@ -477,11 +478,16 @@ class MySelfBot(discord.Client):
         content_lower = full_text.lower()
 
         # =========================================================
-        # ALUR 1: DETEKSI KUIS SELESAI (CEK INI LEBIH DULU!)
+        # ALUR 1: DETEKSI KUIS SELESAI
         # =========================================================
         is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower or "challenge solved" in content_lower or "time's up!" in content_lower
 
         if is_quiz_ended:
+            # 🛑 CEGAH PROSES BERULANG KARENA PESAN DI-EDIT
+            if message.id == last_solved_msg_id:
+                return 
+            last_solved_msg_id = message.id
+
             if "msdn" in content_lower:
                 try:
                     ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
@@ -493,8 +499,16 @@ class MySelfBot(discord.Client):
 
                     wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
                     history = load_loot_history()
-                    history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
-                    save_loot_history(history)
+                    
+                    is_duplicate = False
+                    if len(history) > 0:
+                        last_item = history[0]
+                        if last_item.get("answer") == str_answer and last_item.get("reward") == str_reward:
+                            is_duplicate = True
+
+                    if not is_duplicate:
+                        history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
+                        save_loot_history(history)
                 except: pass
 
             if is_paused or is_triggering_c: return
@@ -507,7 +521,7 @@ class MySelfBot(discord.Client):
                     if bot_mode == "slow":
                         required_wait = random.uniform(7.0, 12.0) 
                     else:
-                        required_wait = random.uniform(5.1, 6.0)
+                        required_wait = random.uniform(5.6, 6.5)
                     
                     if time_since_last_send < required_wait:
                         wait_time = required_wait - time_since_last_send
@@ -524,16 +538,18 @@ class MySelfBot(discord.Client):
                             last_activity_time = datetime.now(timezone.utc)
                             print(f"[FAILED TO SEND !c] Terkena error: {e}")
             finally:
-                # 🛑 PENGAMAN MUTLAK: Reset saklar meskipun ada error saat proses pengiriman di atas
                 is_triggering_c = False
-            
-            # Sangat Penting: Stop proses di sini jika kuis memang sudah selesai!
             return
 
         # =========================================================
-        # ALUR 2: MENJAWAB SOAL BARU (Hanya jika kuis belum selesai)
+        # ALUR 2: MENJAWAB SOAL BARU
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
+            # 🛑 CEGAH PROSES BERULANG KARENA PESAN DI-EDIT
+            if message.id == last_answered_msg_id:
+                return 
+            last_answered_msg_id = message.id
+
             if is_paused: return
 
             print(f"[LOG RENDER] Mendeteksi Quiz Baru dari {message.author.name}!")
@@ -596,8 +612,8 @@ class MySelfBot(discord.Client):
                             await asyncio.sleep(delay)
                         await asyncio.sleep(random.uniform(0.5, 1.5))
                     else:
-                        # FAST MODE: Sangat agresif, jeda pendek setelah soal keluar
-                        await asyncio.sleep(random.uniform(0.5, 1.0))
+                        # FAST MODE: Delay aman baru
+                        await asyncio.sleep(random.uniform(1.0, 1.5))
                     
                     try:
                         await message.channel.send(final_answer)
@@ -606,11 +622,9 @@ class MySelfBot(discord.Client):
                     except Exception as e:
                         print(f"[ERROR SEND JAWABAN] {e}")
 
-    # Hook untuk pesan baru
     async def on_message(self, message):
         await self.process_discord_event(message)
 
-    # 🛑 FITUR BARU: Hook untuk mendeteksi pesan yang diedit oleh LionNSEX
     async def on_message_edit(self, before, after):
         await self.process_discord_event(after)
 
