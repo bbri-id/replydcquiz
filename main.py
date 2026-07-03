@@ -474,7 +474,7 @@ def apply_human_typing(text):
         
     return ans
 
-# 🛑 HELPER: Mengambil respon AI di Latar Belakang agar Bot tidak Freeze
+# 🛑 HELPER: Mengambil respon AI di Latar Belakang
 async def generate_gemini_text(prompt):
     def fetch():
         try:
@@ -596,7 +596,6 @@ class MySelfBot(discord.Client):
                 
                 if is_mentioned or is_replied:
                     time_since_tag = (datetime.now(timezone.utc) - last_tag_reply_time).total_seconds()
-                    # Cooldown Safety: Hanya balas 1 tag setiap 2 Menit (120 detik)
                     if time_since_tag >= 120.0:
                         last_tag_reply_time = datetime.now(timezone.utc)
                         print(f"[TAG DETECTED] Di-tag oleh {message.author.name}. AI menyiapkan balasan...")
@@ -795,23 +794,41 @@ class MySelfBot(discord.Client):
             if final_answer and success:
                 final_answer = apply_human_typing(final_answer)
                 
+                # 🛑 KALKULASI DYNAMIC TYPING DELAY
+                char_count = len(final_answer)
+                
                 async with self.send_lock:
                     if bot_mode == "slow":
+                        reaction_time = random.uniform(1.5, 3.0)
+                        typing_speed = random.uniform(0.2, 0.3)
+                        
+                        # Pertahankan safe_buffer lama hanya untuk memastikan API Discord aman
                         time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
                         safe_buffer = 6.0 
                         if time_since_last_send < safe_buffer:
-                            await asyncio.sleep(safe_buffer - time_since_last_send + random.uniform(0.1, 0.5))
-                        await asyncio.sleep(random.uniform(0.5, 1.5))
+                            time_to_wait = safe_buffer - time_since_last_send
+                            if time_to_wait > (reaction_time + char_count * typing_speed):
+                                await asyncio.sleep(time_to_wait - (reaction_time + char_count * typing_speed) + random.uniform(0.1, 0.5))
+                    
                     elif bot_mode == "fast":
-                        await asyncio.sleep(random.uniform(1.0, 1.5))
+                        reaction_time = random.uniform(0.5, 1.0)
+                        typing_speed = random.uniform(0.10, 0.18)
                     else: # BARBAR MODE
-                        await asyncio.sleep(random.uniform(0.2, 0.7))
+                        reaction_time = random.uniform(0.1, 0.3)
+                        typing_speed = random.uniform(0.05, 0.08)
                         
-                    if quiz_solved_time > current_quiz_start:
+                    dynamic_delay = reaction_time + (char_count * typing_speed)
+                    
+                    print(f"[TYPING] Mode {bot_mode.upper()} - Kata: {char_count} huruf. Delay: {dynamic_delay:.2f} detik.")
+                    await asyncio.sleep(dynamic_delay)
+                        
+                    time_since_solved = (datetime.now(timezone.utc) - quiz_solved_time).total_seconds()
+                    if time_since_solved < 20.0 and quiz_solved_time > current_quiz_start:
                         if random.random() < 0.25:
-                            pass # Tetap kirim (Pura-pura kesalip)
+                            print(f"[HUMANIZER] Kesalip! Tetap kirim '{final_answer}' (pura-pura telat).")
                         else:
-                            return # Cancel pengiriman
+                            print(f"[HUMANIZER] Kesalip! Membatalkan pengiriman '{final_answer}'.")
+                            return
                     
                     try:
                         await message.channel.send(final_answer)
