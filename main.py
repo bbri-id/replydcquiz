@@ -571,17 +571,15 @@ class MySelfBot(discord.Client):
                 bot_mode = "slow"
                 print(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 60 Menit.")
             elif bot_mode == "barbar":
-                print(f"[🔥 BARBAR] Mengabaikan aktivitas Admin {message.author.name}!")
+                pass # Di Mode Barbar, kita acuhkan peringatan Admin
 
         # --- SAKLAR REMOTE CONTROL ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
                 is_paused = True
-                print("[REMOTE CONTROL] Terdeteksi 'rame'. Bot memasuki mode PAUSE.")
             elif "capek" in msg_lower and is_paused:
                 is_paused = False
-                print("[REMOTE CONTROL] Terdeteksi 'capek'. Bot AKTIF kembali.")
                 last_activity_time = datetime.now(timezone.utc)
                 self.loop.create_task(self.trigger_manual_c())
             return
@@ -601,8 +599,6 @@ class MySelfBot(discord.Client):
                 if bot_mode == "fast":
                     bot_mode = "slow"
                     print(f"[STEALTH ALERT] Player {message.author.name} mengetik! Tiarap ke SLOW MODE.")
-                elif bot_mode == "barbar":
-                    print(f"[🔥 BARBAR] Mengabaikan Player {message.author.name}!")
             return 
         
         if message.author.bot == False and message.author.id != TARGET_USER_ID: return
@@ -638,7 +634,6 @@ class MySelfBot(discord.Client):
         if "please wait" in content_lower and "before starting another challenge" in content_lower:
             match = re.search(r'wait (\d+)s', content_lower)
             wait_s = int(match.group(1)) if match else 5
-            print(f"[WARNING LION] Kena cooldown dari LionNSEX! Auto-retry dalam {wait_s + 1} detik...")
             
             async def retry_c(delay):
                 await asyncio.sleep(delay + 1.0)
@@ -683,19 +678,14 @@ class MySelfBot(discord.Client):
             is_triggering_c = True
             
             try:
+                # 🛑 FIX: Wajib mengirim !c menggunakan absolute delay tanpa pengurangan waktu terakhir ngetik
                 async with self.send_lock:
-                    time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                    
                     if bot_mode == "slow":
-                        required_wait = random.uniform(7.0, 12.0) 
+                        await asyncio.sleep(random.uniform(7.0, 12.0))
                     elif bot_mode == "fast":
-                        required_wait = random.uniform(5.5, 6.5)
+                        await asyncio.sleep(random.uniform(5.5, 6.5))
                     else: # BARBAR MODE
-                        required_wait = random.uniform(5.1, 5.3)
-                    
-                    if time_since_last_send < required_wait:
-                        wait_time = required_wait - time_since_last_send
-                        await asyncio.sleep(wait_time)
+                        await asyncio.sleep(random.uniform(5.1, 5.3))
                     
                     target_channel = self.get_channel(TARGET_CHANNEL_ID)
                     if target_channel:
@@ -715,6 +705,9 @@ class MySelfBot(discord.Client):
             if message.id == last_answered_msg_id: return 
             last_answered_msg_id = message.id
             if is_paused: return
+
+            # Catat waktu persis kapan soal ini dibaca untuk fitur kesalip
+            current_quiz_start = datetime.now(timezone.utc)
 
             final_answer = ""
             success = False
@@ -770,9 +763,8 @@ class MySelfBot(discord.Client):
                 final_answer = apply_human_typing(final_answer)
                 
                 async with self.send_lock:
-                    time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                    
                     if bot_mode == "slow":
+                        time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
                         safe_buffer = 6.0 
                         if time_since_last_send < safe_buffer:
                             await asyncio.sleep(safe_buffer - time_since_last_send + random.uniform(0.1, 0.5))
@@ -782,8 +774,8 @@ class MySelfBot(discord.Client):
                     else: # BARBAR MODE
                         await asyncio.sleep(random.uniform(0.2, 0.7))
                         
-                    time_since_solved = (datetime.now(timezone.utc) - quiz_solved_time).total_seconds()
-                    if time_since_solved < 20.0:
+                    # 🛑 FIX: Logika Kesalip hanya mengecek apakah pengumuman pemenang terjadi SETELAH soal ini dibaca!
+                    if quiz_solved_time > current_quiz_start:
                         if random.random() < 0.25:
                             print(f"[HUMANIZER] Kesalip! Tetap kirim '{final_answer}'.")
                         else:
@@ -794,6 +786,8 @@ class MySelfBot(discord.Client):
                         await message.channel.send(final_answer)
                         last_send_time = datetime.now(timezone.utc)
                     except: pass
+            else:
+                print("[WARNING] Gagal menemukan atau parsing jawaban kuis ini.")
 
     async def on_message(self, message):
         await self.process_discord_event(message)
