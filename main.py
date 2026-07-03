@@ -230,8 +230,9 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
-        let currentLootCount = -1; 
-        let currentChatCount = -1;
+        // Gunakan Hash dari data terbaru agar tabel 100% realtime meski data dibatasi 50 baris
+        let lastLootHash = ""; 
+        let lastChatHash = "";
 
         async function fetchAllData() {
             try {
@@ -256,7 +257,9 @@ HTML_TEMPLATE = """
 
                 updateUI(data.paused, data.mode);
                 
-                if (data.loots.length !== currentLootCount) {
+                // Cek data terbaru dari urutan teratas (Index 0)
+                let newLootHash = data.loots.length > 0 ? JSON.stringify(data.loots[0]) : "empty";
+                if (newLootHash !== lastLootHash) {
                     let html = "";
                     if (data.loots.length === 0) {
                         html = "<tr><td colspan='3' style='text-align:center; color:#72767d; padding:20px;'>Belum ada hadiah ter-log.</td></tr>";
@@ -266,10 +269,12 @@ HTML_TEMPLATE = """
                         });
                     }
                     document.getElementById('table-body').innerHTML = html;
-                    currentLootCount = data.loots.length;
+                    lastLootHash = newLootHash;
                 }
 
-                if (data.chats.length !== currentChatCount) {
+                // Cek chat terbaru dari urutan teratas (Index 0)
+                let newChatHash = data.chats.length > 0 ? JSON.stringify(data.chats[0]) : "empty";
+                if (newChatHash !== lastChatHash) {
                     let html = "";
                     if (data.chats.length === 0) {
                         html = "<tr><td style='text-align:center; color:#72767d; padding:20px;'>Room sepi. Belum ada chat player.</td></tr>";
@@ -279,7 +284,7 @@ HTML_TEMPLATE = """
                         });
                     }
                     document.getElementById('chat-body').innerHTML = html;
-                    currentChatCount = data.chats.length;
+                    lastChatHash = newChatHash;
                 }
             } catch (error) { console.error("Gagal menarik data API:", error); }
         }
@@ -340,7 +345,8 @@ HTML_TEMPLATE = """
         }
 
         fetchAllData();
-        setInterval(fetchAllData, 3000); 
+        // Polling dipercepat jadi 2 Detik agar sangat Real-Time!
+        setInterval(fetchAllData, 2000); 
 
         document.addEventListener("visibilitychange", function() {
             if (!document.hidden) {
@@ -571,7 +577,7 @@ class MySelfBot(discord.Client):
                 bot_mode = "slow"
                 print(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 60 Menit.")
             elif bot_mode == "barbar":
-                pass # Di Mode Barbar, kita acuhkan peringatan Admin
+                pass
 
         # --- SAKLAR REMOTE CONTROL ---
         if message.author.id == self.user.id:
@@ -678,14 +684,19 @@ class MySelfBot(discord.Client):
             is_triggering_c = True
             
             try:
-                # 🛑 FIX: Wajib mengirim !c menggunakan absolute delay tanpa pengurangan waktu terakhir ngetik
                 async with self.send_lock:
+                    time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
+                    
                     if bot_mode == "slow":
-                        await asyncio.sleep(random.uniform(7.0, 12.0))
+                        required_wait = random.uniform(7.0, 12.0) 
                     elif bot_mode == "fast":
-                        await asyncio.sleep(random.uniform(5.5, 6.5))
+                        required_wait = random.uniform(5.5, 6.5)
                     else: # BARBAR MODE
-                        await asyncio.sleep(random.uniform(5.1, 5.3))
+                        required_wait = random.uniform(5.1, 5.3)
+                    
+                    if time_since_last_send < required_wait:
+                        wait_time = required_wait - time_since_last_send
+                        await asyncio.sleep(wait_time)
                     
                     target_channel = self.get_channel(TARGET_CHANNEL_ID)
                     if target_channel:
@@ -706,7 +717,6 @@ class MySelfBot(discord.Client):
             last_answered_msg_id = message.id
             if is_paused: return
 
-            # Catat waktu persis kapan soal ini dibaca untuk fitur kesalip
             current_quiz_start = datetime.now(timezone.utc)
 
             final_answer = ""
@@ -774,20 +784,16 @@ class MySelfBot(discord.Client):
                     else: # BARBAR MODE
                         await asyncio.sleep(random.uniform(0.2, 0.7))
                         
-                    # 🛑 FIX: Logika Kesalip hanya mengecek apakah pengumuman pemenang terjadi SETELAH soal ini dibaca!
                     if quiz_solved_time > current_quiz_start:
                         if random.random() < 0.25:
-                            print(f"[HUMANIZER] Kesalip! Tetap kirim '{final_answer}'.")
+                            pass # Tetap kirim (Pura-pura kesalip)
                         else:
-                            print(f"[HUMANIZER] Kesalip! Membatalkan pengiriman '{final_answer}'.")
-                            return
+                            return # Cancel pengiriman
                     
                     try:
                         await message.channel.send(final_answer)
                         last_send_time = datetime.now(timezone.utc)
                     except: pass
-            else:
-                print("[WARNING] Gagal menemukan atau parsing jawaban kuis ini.")
 
     async def on_message(self, message):
         await self.process_discord_event(message)
