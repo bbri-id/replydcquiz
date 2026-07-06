@@ -109,23 +109,28 @@ ai_client = genai.Client(api_key=API_KEY_GEMINI)
 def apply_human_typing(text):
     ans = str(text)
     if ans.isdigit(): return ans 
-    if random.random() < 0.50:
+    
+    # TYPO SPASI: Turun drastis jadi 10%
+    if random.random() < 0.10:
         if ' ' in ans or '-' in ans:
             ans = ans.replace(' ', '').replace('-', '')
         else:
             if len(ans) >= 4:
                 idx = random.randint(2, len(ans)-2)
                 ans = ans[:idx] + ' ' + ans[idx:]
+                
+    # TYPO CASING: 85% huruf kecil natural, 10% alay, 5% kebalik
     case_choice = random.random()
-    if case_choice < 0.40: ans = ans.lower() 
-    elif case_choice < 0.60:
+    if case_choice < 0.85: 
+        ans = ans.lower() 
+    elif case_choice < 0.95:
         ans_list = list(ans.lower())
         num_upper = random.randint(1, max(1, len(ans_list)//2))
         for _ in range(num_upper):
             idx = random.randint(0, len(ans_list)-1)
             ans_list[idx] = ans_list[idx].upper()
         ans = "".join(ans_list)
-    elif case_choice < 0.80:
+    else:
         if len(ans) > 2: ans = ans[0].lower() + ans[1:].upper() 
         else: ans = ans.upper() 
     return ans
@@ -528,22 +533,6 @@ class MySelfBot(discord.Client):
 
         if message.channel.id != TARGET_CHANNEL_ID: return
 
-        # ==========================================
-        # 🛠️ DEBUG MODE: CETAK SEMUA PESAN DI RENDER
-        # ==========================================
-        logging.warning("\n--- [DEBUG MESSAGE RADAR] ---")
-        logging.warning(f"Author: {message.author.name} (Bot: {message.author.bot})")
-        logging.warning(f"Content: {message.content}")
-        if message.embeds:
-            logging.warning(f"Embeds: {len(message.embeds)}")
-            for e in message.embeds: logging.warning(f" - Title: {e.title} | Desc: {e.description}")
-        if message.components:
-            logging.warning(f"Components found:")
-            for row in message.components:
-                for child in getattr(row, 'children', []):
-                    logging.warning(f"  -> Type: {getattr(child, 'type', 'N/A')}, Custom ID: {getattr(child, 'custom_id', 'N/A')}")
-        logging.warning("-----------------------------\n")
-
         # RADAR ADMIN
         author_name = message.author.name.lower()
         author_display = message.author.display_name.lower()
@@ -622,7 +611,7 @@ class MySelfBot(discord.Client):
                     if hasattr(child, 'click'):
                         cid = str(getattr(child, 'custom_id', '')).lower()
                         if "pending" in cid:
-                            logging.warning("[RADAR] Tombol masih 'pending', menahan klik...")
+                            # logging dihilangkan agar log render rapi
                             continue
                         target_btn = child
                         break
@@ -651,7 +640,6 @@ class MySelfBot(discord.Client):
                             self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
                     except Exception as e:
                         logging.warning(f"[MAIN BUTTON ERROR] Semua metode klik gagal: {e}")
-                        traceback.print_exc()
                 
                 self.loop.create_task(execute_main_click())
 
