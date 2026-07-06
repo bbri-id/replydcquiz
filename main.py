@@ -11,37 +11,43 @@ from threading import Thread
 from datetime import datetime, timedelta, timezone
 
 # =========================================================
-# 1. VARIABEL GLOBAL (STATE, TIMERS, MODE & MEMORY)
+# 1. VARIABEL GLOBAL & TOKEN (SECURE)
 # =========================================================
+TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
+API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
+TARGET_USER_ID = int(os.getenv('TARGET_USER_ID')) if os.getenv('TARGET_USER_ID') else None
+TARGET_CHANNEL_ID = int(os.getenv('TARGET_CHANNEL_ID')) if os.getenv('TARGET_CHANNEL_ID') else None
+
+# 🛑 TOKEN TUMBAL SUDAH MASUK ENVIRONMENT
+TOKEN_TUMBAL = os.getenv('DISCORD_TOKEN_TUMBAL')
+
+if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID or not TARGET_CHANNEL_ID or not TOKEN_TUMBAL:
+    print("Error: Variabel lingkungan belum diisi lengkap! Pastikan TOKEN_TUMBAL juga sudah ditambahkan di .env/Render.")
+    exit(1)
+
 START_TIME_UTC = datetime.now(timezone.utc)
 last_activity_time = datetime.now(timezone.utc)
 last_send_time = datetime.now(timezone.utc)
 
-# Memory Stealth Mode
 last_player_chat_time = datetime.now(timezone.utc) - timedelta(minutes=10) 
 last_admin_activity = datetime.now(timezone.utc) - timedelta(minutes=15) 
 quiz_solved_time = datetime.now(timezone.utc) - timedelta(minutes=10)
 last_tag_reply_time = datetime.now(timezone.utc) - timedelta(minutes=10)
 
 is_paused = False  
-is_triggering_c = False
-quiz_channel_id = None
-client = None  
-
 bot_mode = "fast" 
 rate_limit_count = 0
 
 last_answered_msg_id = None
 last_solved_msg_id = None
+last_clicked_btn_msg_id = None 
 
-# 🛑 MEMORI TOTAL GAINED (Akumulasi Sejak Server Up)
 session_total_xp = 0
 session_total_gold = 0
 session_total_token = 0
 session_total_tp = 0
 session_rare_count = 0
 
-# 🛑 MEMORI IDLE CHAT & LOSS STREAK (Humanizer)
 used_idle_chats = set()
 quiz_solved_counter = 0
 next_idle_chat_target = random.randint(5, 20)
@@ -50,7 +56,7 @@ consecutive_losses = 0
 next_loss_target = random.randint(5, 7)
 
 # =========================================================
-# 2. PENCEGAT LOG UNTUK MENGHITUNG RATE LIMIT (429)
+# 2. PENCEGAT LOG & AI
 # =========================================================
 class RateLimitHandler(logging.Handler):
     def emit(self, record):
@@ -64,8 +70,42 @@ rl_handler = RateLimitHandler()
 logging.getLogger('discord.http').addHandler(rl_handler)
 logging.basicConfig(level=logging.INFO)
 
+ai_client = genai.Client(api_key=API_KEY_GEMINI)
+
+def apply_human_typing(text):
+    ans = str(text)
+    if ans.isdigit(): return ans 
+    if random.random() < 0.50:
+        if ' ' in ans or '-' in ans:
+            ans = ans.replace(' ', '').replace('-', '')
+        else:
+            if len(ans) >= 4:
+                idx = random.randint(2, len(ans)-2)
+                ans = ans[:idx] + ' ' + ans[idx:]
+    case_choice = random.random()
+    if case_choice < 0.40: ans = ans.lower() 
+    elif case_choice < 0.60:
+        ans_list = list(ans.lower())
+        num_upper = random.randint(1, max(1, len(ans_list)//2))
+        for _ in range(num_upper):
+            idx = random.randint(0, len(ans_list)-1)
+            ans_list[idx] = ans_list[idx].upper()
+        ans = "".join(ans_list)
+    elif case_choice < 0.80:
+        if len(ans) > 2: ans = ans[0].lower() + ans[1:].upper() 
+        else: ans = ans.upper() 
+    return ans
+
+async def generate_gemini_text(prompt):
+    def fetch():
+        try:
+            response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+            return response.text.strip().replace('"', '')
+        except: return ""
+    return await asyncio.to_thread(fetch)
+
 # =========================================================
-# 3. SETUP WEB SERVER MINI, REKAPAN HADIAH, & DASHBOARD
+# 3. SETUP WEB SERVER MINI
 # =========================================================
 app = Flask('')
 DB_FILE = "loot_history.json"
@@ -81,7 +121,7 @@ def load_json_db(file_name):
 def save_json_db(file_name, data):
     try:
         with open(file_name, "w") as f: json.dump(data[:50], f, indent=4)
-    except Exception as e: print(f"[ERROR DB] {e}")
+    except Exception as e: pass
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -184,7 +224,6 @@ HTML_TEMPLATE = """
     <script>
         let lastLootHash = ""; 
         let lastChatHash = "";
-
         async function fetchAllData() {
             try {
                 let res = await fetch('/api/data?_=' + new Date().getTime());
@@ -205,19 +244,13 @@ HTML_TEMPLATE = """
                 document.getElementById('val-tp').innerText = data.total_tp;
                 document.getElementById('val-rare').innerText = data.rare_count + "x";
                 document.getElementById('rl-badge').innerText = data.rate_limit_count;
-
                 updateUI(data.paused, data.mode);
                 
                 let newLootHash = data.loots.length > 0 ? JSON.stringify(data.loots[0]) : "empty";
                 if (newLootHash !== lastLootHash) {
                     let html = "";
-                    if (data.loots.length === 0) {
-                        html = "<tr><td colspan='3' style='text-align:center; color:#72767d; padding:20px;'>Belum ada hadiah ter-log.</td></tr>";
-                    } else {
-                        data.loots.forEach(loot => {
-                            html += `<tr><td style="width:25%">${loot.time}</td><td style="width:35%"><code>${loot.answer}</code></td><td class="reward">${loot.reward}</td></tr>`;
-                        });
-                    }
+                    if (data.loots.length === 0) html = "<tr><td colspan='3' style='text-align:center; color:#72767d; padding:20px;'>Belum ada hadiah ter-log.</td></tr>";
+                    else data.loots.forEach(loot => { html += `<tr><td style="width:25%">${loot.time}</td><td style="width:35%"><code>${loot.answer}</code></td><td class="reward">${loot.reward}</td></tr>`; });
                     document.getElementById('table-body').innerHTML = html;
                     lastLootHash = newLootHash;
                 }
@@ -225,57 +258,31 @@ HTML_TEMPLATE = """
                 let newChatHash = data.chats.length > 0 ? JSON.stringify(data.chats[0]) : "empty";
                 if (newChatHash !== lastChatHash) {
                     let html = "";
-                    if (data.chats.length === 0) {
-                        html = "<tr><td style='text-align:center; color:#72767d; padding:20px;'>Room sepi. Belum ada chat player.</td></tr>";
-                    } else {
-                        data.chats.forEach(chat => {
-                            html += `<tr><td><span class="chat-author">${chat.author}</span>${chat.content} <br><span style="font-size:0.8em; color:#72767d;">${chat.time}</span></td></tr>`;
-                        });
-                    }
+                    if (data.chats.length === 0) html = "<tr><td style='text-align:center; color:#72767d; padding:20px;'>Room sepi. Belum ada chat player.</td></tr>";
+                    else data.chats.forEach(chat => { html += `<tr><td><span class="chat-author">${chat.author}</span>${chat.content} <br><span style="font-size:0.8em; color:#72767d;">${chat.time}</span></td></tr>`; });
                     document.getElementById('chat-body').innerHTML = html;
                     lastChatHash = newChatHash;
                 }
-            } catch (error) { console.error("Gagal menarik data API:", error); }
+            } catch (error) { console.error(error); }
         }
 
         async function toggleBot() {
-            let btn = document.getElementById('toggle-btn');
-            btn.disabled = true;
-            try {
-                let res = await fetch('/api/toggle', { method: 'POST' });
-                let data = await res.json();
-                updateUI(data.paused, data.mode);
-            } catch (error) { alert("Gagal menghubungi server!"); }
-            btn.disabled = false;
+            let btn = document.getElementById('toggle-btn'); btn.disabled = true;
+            try { let res = await fetch('/api/toggle', { method: 'POST' }); let data = await res.json(); updateUI(data.paused, data.mode); } catch (e) {} btn.disabled = false;
         }
 
         async function toggleMode() {
-            let btn = document.getElementById('toggle-mode-btn');
-            btn.disabled = true;
-            try {
-                let res = await fetch('/api/toggle_mode', { method: 'POST' });
-                let data = await res.json();
-                updateUI(data.paused, data.mode);
-            } catch (error) { alert("Gagal mengubah mode!"); }
-            btn.disabled = false;
+            let btn = document.getElementById('toggle-mode-btn'); btn.disabled = true;
+            try { let res = await fetch('/api/toggle_mode', { method: 'POST' }); let data = await res.json(); updateUI(data.paused, data.mode); } catch (e) {} btn.disabled = false;
         }
 
         async function toggleBarbar() {
-            let btn = document.getElementById('barbar-btn');
-            btn.disabled = true;
-            try {
-                let res = await fetch('/api/toggle_barbar', { method: 'POST' });
-                let data = await res.json();
-                updateUI(data.paused, data.mode);
-            } catch (error) { alert("Gagal mengubah mode!"); }
-            btn.disabled = false;
+            let btn = document.getElementById('barbar-btn'); btn.disabled = true;
+            try { let res = await fetch('/api/toggle_barbar', { method: 'POST' }); let data = await res.json(); updateUI(data.paused, data.mode); } catch (e) {} btn.disabled = false;
         }
 
         function updateUI(isPaused, botMode) {
-            let badgeStatus = document.getElementById('status-badge');
-            let badgeMode = document.getElementById('mode-badge');
-            let btn = document.getElementById('toggle-btn');
-            
+            let badgeStatus = document.getElementById('status-badge'), badgeMode = document.getElementById('mode-badge'), btn = document.getElementById('toggle-btn');
             if (isPaused) {
                 badgeStatus.innerHTML = "😴 PAUSED"; badgeStatus.style.color = "#ed4245";
                 btn.className = "btn btn-start"; btn.innerHTML = "▶️ START BOT";
@@ -283,22 +290,14 @@ HTML_TEMPLATE = """
                 badgeStatus.innerHTML = "🚀 RUNNING"; badgeStatus.style.color = "#43b581";
                 btn.className = "btn btn-pause"; btn.innerHTML = "⏸️ PAUSE BOT";
             }
-
-            if (botMode === "barbar") {
-                badgeMode.innerHTML = "🔥 BARBAR (No Rules!)"; badgeMode.style.color = "#ff4757";
-            } else if (botMode === "fast") {
-                badgeMode.innerHTML = "🏎️ FAST MODE"; badgeMode.style.color = "#faa61a";
-            } else {
-                badgeMode.innerHTML = "🐢 SLOW MODE (Stealth/Manual)"; badgeMode.style.color = "#b9bbbe";
-            }
+            if (botMode === "barbar") { badgeMode.innerHTML = "🔥 BARBAR (No Rules!)"; badgeMode.style.color = "#ff4757"; }
+            else if (botMode === "fast") { badgeMode.innerHTML = "🏎️ FAST MODE"; badgeMode.style.color = "#faa61a"; }
+            else { badgeMode.innerHTML = "🐢 SLOW MODE (Stealth/Manual)"; badgeMode.style.color = "#b9bbbe"; }
         }
 
         fetchAllData();
         setInterval(fetchAllData, 2000); 
-
-        document.addEventListener("visibilitychange", function() {
-            if (!document.hidden) fetchAllData();
-        });
+        document.addEventListener("visibilitychange", function() { if (!document.hidden) fetchAllData(); });
     </script>
 </body>
 </html>
@@ -312,53 +311,32 @@ def home():
 def get_data():
     loots = load_json_db(DB_FILE)
     chats = load_json_db(CHAT_DB_FILE)
-    
     now_utc = datetime.now(timezone.utc)
     uptime_delta = now_utc - START_TIME_UTC
     hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
     minutes, _ = divmod(remainder, 60)
-    
     start_time_wib = START_TIME_UTC + timedelta(hours=7)
-    start_str = start_time_wib.strftime('%d %B %Y %H.%M WIB')
-    uptime_str = f"{hours} Hours {minutes} Minutes"
-
+    
     time_since_admin = (now_utc - last_admin_activity).total_seconds()
     time_since_player = (now_utc - last_player_chat_time).total_seconds()
     
-    if bot_mode == "barbar":
-        stealth_str = "🔥 MODE BARBAR (Stealth OFF)"
-    elif time_since_admin < 600.0:  # ADMIN HANYA 10 MENIT
-        stealth_str = f"🚨 ADMIN ONLINE! Tiarap {int((600 - time_since_admin)/60)} Menit."
-    elif time_since_player < 300.0:
-        stealth_str = f"⚠️ Ada Player! Tiarap {int(300 - time_since_player)} Detik."
-    else:
-        stealth_str = "🟢 Aman (Sepi)"
+    if bot_mode == "barbar": stealth_str = "🔥 MODE BARBAR (Stealth OFF)"
+    elif time_since_admin < 600.0: stealth_str = f"🚨 ADMIN ONLINE! Tiarap {int((600 - time_since_admin)/60)} Menit."
+    elif time_since_player < 300.0: stealth_str = f"⚠️ Ada Player! Tiarap {int(300 - time_since_player)} Detik."
+    else: stealth_str = "🟢 Aman (Sepi)"
 
     return jsonify({
-        "start_str": start_str,
-        "uptime_str": uptime_str,
-        "stealth_str": stealth_str,
-        "total_xp": session_total_xp,
-        "total_gold": session_total_gold,
-        "total_token": session_total_token,
-        "total_tp": session_total_tp,
-        "rare_count": session_rare_count,
-        "loots": loots,
-        "chats": chats,
-        "paused": is_paused,
-        "mode": bot_mode,
-        "rate_limit_count": rate_limit_count
+        "start_str": start_time_wib.strftime('%d %B %Y %H.%M WIB'), "uptime_str": f"{hours} Hours {minutes} Minutes",
+        "stealth_str": stealth_str, "total_xp": session_total_xp, "total_gold": session_total_gold,
+        "total_token": session_total_token, "total_tp": session_total_tp, "rare_count": session_rare_count,
+        "loots": loots, "chats": chats, "paused": is_paused, "mode": bot_mode, "rate_limit_count": rate_limit_count
     })
 
 @app.route('/api/toggle', methods=['POST'])
 def toggle_state():
-    global is_paused, last_activity_time, client
+    global is_paused, last_activity_time
     is_paused = not is_paused
-    if not is_paused:
-        last_activity_time = datetime.now(timezone.utc)
-        if client and client.loop and client.is_ready():
-            try: asyncio.run_coroutine_threadsafe(client.trigger_manual_c(), client.loop)
-            except: pass
+    if not is_paused: last_activity_time = datetime.now(timezone.utc)
     return jsonify({"paused": is_paused, "mode": bot_mode})
 
 @app.route('/api/toggle_mode', methods=['POST'])
@@ -425,64 +403,47 @@ LOGO_MAP = {
     "logo_501": "harley", "logo_502": "nescafe"
 }
 
+
 # =========================================================
-# 5. CORE CODE SELF-BOT DISCORD & GEMINI CONFIG
+# 5. TUMBAL BOT (AKUN KE-2) - INVISIBLE & SILENT
 # =========================================================
-TOKEN_DISCORD = os.getenv('DISCORD_TOKEN')
-API_KEY_GEMINI = os.getenv('GEMINI_API_KEY')
-TARGET_USER_ID = int(os.getenv('TARGET_USER_ID')) if os.getenv('TARGET_USER_ID') else None
-TARGET_CHANNEL_ID = int(os.getenv('TARGET_CHANNEL_ID')) if os.getenv('TARGET_CHANNEL_ID') else None
+class TumbalBot(discord.Client):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID or not TARGET_CHANNEL_ID:
-    print("Error: Variabel lingkungan belum diisi lengkap! Pastikan TARGET_CHANNEL_ID sudah ditambahkan.")
-    exit(1)
+    async def on_ready(self):
+        print(f"[TUMBAL] Hadir sebagai Jari Tambahan: {self.user} (Invisible Mode)")
 
-ai_client = genai.Client(api_key=API_KEY_GEMINI)
+tumbal_client = TumbalBot(status=discord.Status.invisible)
 
-# 🛑 FUNGSI TYPING RANDOMIZER (HUMANIZER) ADVANCED
-def apply_human_typing(text):
-    ans = str(text)
-    if ans.isdigit(): return ans 
-    
-    # 50% Peluang memanipulasi simbol/spasi tanpa ngurangin alfabet asli
-    if random.random() < 0.50:
-        if ' ' in ans or '-' in ans:
-            ans = ans.replace(' ', '').replace('-', '')
-        else:
-            if len(ans) >= 4:
-                idx = random.randint(2, len(ans)-2)
-                ans = ans[:idx] + ' ' + ans[idx:]
+# Fungsi rahasia untuk memicu klik di akun tumbal setelah jeda 1-3 detik
+async def trigger_tumbal_click(channel_id, message_id):
+    await asyncio.sleep(random.uniform(1.0, 3.0))
+    try:
+        channel = tumbal_client.get_channel(channel_id)
+        if not channel: channel = await tumbal_client.fetch_channel(channel_id)
+        msg = await channel.fetch_message(message_id)
         
-    # Casing yang super tidak berpola
-    case_choice = random.random()
-    if case_choice < 0.40: 
-        ans = ans.lower() 
-    elif case_choice < 0.60:
-        ans_list = list(ans.lower())
-        num_upper = random.randint(1, max(1, len(ans_list)//2))
-        for _ in range(num_upper):
-            idx = random.randint(0, len(ans_list)-1)
-            ans_list[idx] = ans_list[idx].upper()
-        ans = "".join(ans_list)
-    elif case_choice < 0.80:
-        if len(ans) > 2: 
-            ans = ans[0].lower() + ans[1:].upper() # cONTOH
-        else: 
-            ans = ans.upper() 
-    else: 
+        target_btn = None
+        if msg.components:
+            for row in msg.components:
+                for child in row.children:
+                    if getattr(child, 'type', None) == discord.ComponentType.button and "Start Challenge" in getattr(child, 'label', ''):
+                        target_btn = child
+                        break
+                if target_btn: break
+        
+        if target_btn and not target_btn.disabled:
+            await target_btn.click()
+            print("[TUMBAL] Berhasil menyusul klik Start Challenge secara diam-diam.")
+    except Exception:
+        # Gagal ngeklik karena udah kesalip player asli? Biarkan saja tanpa error log!
         pass 
-        
-    return ans
 
-# 🛑 HELPER: Mengambil respon AI di Latar Belakang
-async def generate_gemini_text(prompt):
-    def fetch():
-        try:
-            response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-            return response.text.strip().replace('"', '')
-        except: return ""
-    return await asyncio.to_thread(fetch)
 
+# =========================================================
+# 6. MAIN BOT (AKUN UTAMA)
+# =========================================================
 class MySelfBot(discord.Client):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -492,22 +453,9 @@ class MySelfBot(discord.Client):
         global client
         client = self
         if self.send_lock is None: self.send_lock = asyncio.Lock()
-            
-        print(f'Self-bot aktif sebagai: {self.user}')
-        print(f'=== MULTI-MODE & DASHBOARD AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===')
+        print(f"[MAIN] Self-bot aktif sebagai: {self.user}")
+        print(f"=== MULTI-MODE & DASHBOARD AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===")
         self.loop.create_task(self.background_30s_loop())
-
-    async def trigger_manual_c(self):
-        global last_activity_time, last_send_time
-        if not self.is_ready() or is_paused: return
-        async with self.send_lock:
-            target_channel = self.get_channel(TARGET_CHANNEL_ID)
-            if target_channel:
-                try:
-                    await target_channel.send("!c")
-                    last_activity_time = datetime.now(timezone.utc)
-                    last_send_time = datetime.now(timezone.utc)
-                except: pass
 
     # 🛑 FITUR AI 1: Bosen/Pegel saat Menang Terus
     async def send_idle_chat(self):
@@ -547,13 +495,15 @@ class MySelfBot(discord.Client):
             print(f"[AI CHAT] Membalas Tag: {msg}")
             await channel.send(msg)
 
+
     async def process_discord_event(self, message):
-        global is_paused, last_activity_time, is_triggering_c, last_send_time, bot_mode
+        global is_paused, last_activity_time, bot_mode
         global last_answered_msg_id, last_solved_msg_id, last_player_chat_time
         global quiz_solved_time, last_admin_activity, last_tag_reply_time
         global session_total_xp, session_total_gold, session_total_token, session_total_tp, session_rare_count
         global quiz_solved_counter, next_idle_chat_target
         global consecutive_losses, next_loss_target
+        global last_clicked_btn_msg_id
 
         # 🕵️ RADAR ADMIN
         author_name = message.author.name.lower()
@@ -564,6 +514,7 @@ class MySelfBot(discord.Client):
                 bot_mode = "slow"
                 print(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 10 Menit.")
 
+        # --- SAKLAR REMOTE CONTROL & PENGABAIAN PESAN SENDIRI ---
         if message.author.id == self.user.id:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
@@ -571,7 +522,6 @@ class MySelfBot(discord.Client):
             elif "capek" in msg_lower and is_paused:
                 is_paused = False
                 last_activity_time = datetime.now(timezone.utc)
-                self.loop.create_task(self.trigger_manual_c())
             return
 
         if message.channel.id != TARGET_CHANNEL_ID: return
@@ -590,10 +540,8 @@ class MySelfBot(discord.Client):
                     bot_mode = "slow"
                     print(f"[STEALTH ALERT] Player {message.author.name} mengetik! Tiarap ke SLOW MODE.")
 
-                # 🛑 CEK JIKA KITA DI-TAG / DI-QUOTE
                 is_mentioned = str(self.user.id) in message.content
                 is_replied = message.reference and getattr(message.reference.resolved, 'author', None) and message.reference.resolved.author.id == self.user.id
-                
                 if is_mentioned or is_replied:
                     time_since_tag = (datetime.now(timezone.utc) - last_tag_reply_time).total_seconds()
                     if time_since_tag >= 120.0:
@@ -612,9 +560,45 @@ class MySelfBot(discord.Client):
 
         last_activity_time = datetime.now(timezone.utc)
 
+
+        # =========================================================
+        # ALUR 1: DETEKSI TOMBOL "START CHALLENGE" 🎮
+        # =========================================================
+        target_btn = None
+        if message.components:
+            for row in message.components:
+                for child in row.children:
+                    if getattr(child, 'type', None) == discord.ComponentType.button and "Start Challenge" in getattr(child, 'label', ''):
+                        target_btn = child
+                        break
+                if target_btn: break
+                
+        if target_btn and message.id != last_clicked_btn_msg_id:
+            if not is_paused:
+                last_clicked_btn_msg_id = message.id
+                
+                # Kalkulasi delay natural akun utama saat menekan tombol pertama
+                if bot_mode == "slow": click_delay = random.uniform(2.0, 4.0)
+                elif bot_mode == "fast": click_delay = random.uniform(1.0, 2.0)
+                else: click_delay = random.uniform(0.3, 0.8) # BARBAR
+                    
+                print(f"[BUTTON] Menemukan Start Challenge! Main bot akan klik dalam {click_delay:.2f}s")
+                
+                async def execute_main_click():
+                    await asyncio.sleep(click_delay)
+                    try:
+                        await target_btn.click()
+                        print("[MAIN BUTTON] Berhasil menekan Start Challenge.")
+                        # Setelah sukses, lempar tugas ke Akun Tumbal
+                        self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
+                    except Exception as e:
+                        print(f"[MAIN BUTTON ERROR] Gagal menekan tombol: {e}")
+                
+                self.loop.create_task(execute_main_click())
+
+
         full_text = ""
         image_urls = []
-
         if message.embeds:
             for embed in message.embeds:
                 if embed.title: full_text += embed.title + "\n"
@@ -622,27 +606,15 @@ class MySelfBot(discord.Client):
                 if embed.fields:
                     for field in embed.fields: full_text += f"{field.name}: {field.value}\n"
                 if embed.footer and embed.footer.text: full_text += embed.footer.text + "\n"
-                
                 if embed.image and embed.image.url: image_urls.append(embed.image.url)
                 if embed.thumbnail and embed.thumbnail.url: image_urls.append(embed.thumbnail.url)
 
         if message.content: full_text += "\n" + message.content
         content_lower = full_text.lower()
 
-        # =========================================================
-        # ALUR 0: DETEKSI COOLDOWN LIONNSEX (Self-Healing)
-        # =========================================================
-        if "please wait" in content_lower and "before starting another challenge" in content_lower:
-            match = re.search(r'wait (\d+)s', content_lower)
-            wait_s = int(match.group(1)) if match else 5
-            async def retry_c(delay):
-                await asyncio.sleep(delay + 1.0)
-                await self.trigger_manual_c()
-            self.loop.create_task(retry_c(wait_s))
-            return
 
         # =========================================================
-        # ALUR 1: DETEKSI KUIS SELESAI
+        # ALUR 2: DETEKSI KUIS SELESAI & KALKULASI REWARD
         # =========================================================
         is_quiz_ended = "got it first!" in content_lower or "reward:" in content_lower or "challenge solved" in content_lower or "time's up!" in content_lower
 
@@ -651,9 +623,8 @@ class MySelfBot(discord.Client):
             last_solved_msg_id = message.id
             quiz_solved_time = datetime.now(timezone.utc) 
 
-            # 🛑 DETEKSI LOSS STREAK & LOG REWARD
             if "msdn" in content_lower:
-                consecutive_losses = 0 # RESET Streak karena bot MENANG
+                consecutive_losses = 0 
                 try:
                     ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                     rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
@@ -674,7 +645,6 @@ class MySelfBot(discord.Client):
                         history.insert(0, {"time": wib_time.strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "reward": str_reward})
                         save_json_db(DB_FILE, history)
                         
-                        # 🛑 TAMBAHKAN KE MEMORI TOTAL SESSION
                         rew_lower = str_reward.lower()
                         def extract_val(pattern, text):
                             m = re.search(pattern, text)
@@ -687,7 +657,6 @@ class MySelfBot(discord.Client):
                         session_total_tp += extract_val(r'([\d,\.]+)\s*tp', rew_lower)
                         if "rare" in rew_lower: session_rare_count += 1
 
-                        # 🛑 NAIKKAN COUNTER IDLE CHAT (Bosan Menang)
                         quiz_solved_counter += 1
                         if quiz_solved_counter >= next_idle_chat_target:
                             quiz_solved_counter = 0
@@ -695,44 +664,16 @@ class MySelfBot(discord.Client):
                             self.loop.create_task(self.send_idle_chat())
                 except: pass
             else:
-                # 🛑 KITA KALAH / KESALIP!
                 consecutive_losses += 1
                 if consecutive_losses >= next_loss_target:
                     consecutive_losses = 0
                     next_loss_target = random.randint(5, 7)
                     self.loop.create_task(self.send_loss_streak_chat())
-
-            if is_paused or is_triggering_c: return
-            is_triggering_c = True
-            
-            try:
-                async with self.send_lock:
-                    time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                    
-                    if bot_mode == "slow":
-                        required_wait = random.uniform(7.0, 12.0) 
-                    elif bot_mode == "fast":
-                        required_wait = random.uniform(5.5, 6.5)
-                    else: # BARBAR MODE
-                        required_wait = random.uniform(5.1, 5.3)
-                    
-                    if time_since_last_send < required_wait:
-                        wait_time = required_wait - time_since_last_send
-                        await asyncio.sleep(wait_time)
-                    
-                    target_channel = self.get_channel(TARGET_CHANNEL_ID)
-                    if target_channel:
-                        try:
-                            await target_channel.send("!c")
-                            last_activity_time = datetime.now(timezone.utc)
-                            last_send_time = datetime.now(timezone.utc)
-                        except: pass
-            finally:
-                is_triggering_c = False
             return
 
+
         # =========================================================
-        # ALUR 2: MENJAWAB SOAL BARU
+        # ALUR 3: MENJAWAB SOAL BARU
         # =========================================================
         if "60 seconds" in content_lower or "!char" in content_lower:
             if message.id == last_answered_msg_id: return 
@@ -793,23 +734,12 @@ class MySelfBot(discord.Client):
 
             if final_answer and success:
                 final_answer = apply_human_typing(final_answer)
-                
-                # 🛑 KALKULASI DYNAMIC TYPING DELAY
                 char_count = len(final_answer)
                 
                 async with self.send_lock:
                     if bot_mode == "slow":
                         reaction_time = random.uniform(1.5, 3.0)
                         typing_speed = random.uniform(0.2, 0.3)
-                        
-                        # Pertahankan safe_buffer lama hanya untuk memastikan API Discord aman
-                        time_since_last_send = (datetime.now(timezone.utc) - last_send_time).total_seconds()
-                        safe_buffer = 6.0 
-                        if time_since_last_send < safe_buffer:
-                            time_to_wait = safe_buffer - time_since_last_send
-                            if time_to_wait > (reaction_time + char_count * typing_speed):
-                                await asyncio.sleep(time_to_wait - (reaction_time + char_count * typing_speed) + random.uniform(0.1, 0.5))
-                    
                     elif bot_mode == "fast":
                         reaction_time = random.uniform(0.5, 1.0)
                         typing_speed = random.uniform(0.10, 0.18)
@@ -818,17 +748,12 @@ class MySelfBot(discord.Client):
                         typing_speed = random.uniform(0.05, 0.08)
                         
                     dynamic_delay = reaction_time + (char_count * typing_speed)
-                    
                     print(f"[TYPING] Mode {bot_mode.upper()} - Kata: {char_count} huruf. Delay: {dynamic_delay:.2f} detik.")
                     await asyncio.sleep(dynamic_delay)
                         
-                    time_since_solved = (datetime.now(timezone.utc) - quiz_solved_time).total_seconds()
-                    if time_since_solved < 20.0 and quiz_solved_time > current_quiz_start:
-                        if random.random() < 0.25:
-                            print(f"[HUMANIZER] Kesalip! Tetap kirim '{final_answer}' (pura-pura telat).")
-                        else:
-                            print(f"[HUMANIZER] Kesalip! Membatalkan pengiriman '{final_answer}'.")
-                            return
+                    if quiz_solved_time > current_quiz_start:
+                        if random.random() < 0.25: pass # Pura-pura kesalip
+                        else: return # Batal kirim
                     
                     try:
                         await message.channel.send(final_answer)
@@ -842,38 +767,30 @@ class MySelfBot(discord.Client):
         await self.process_discord_event(after)
 
     # =========================================================
-    # BACKGROUND WORKER LOOP (Setiap 30 Detik)
+    # BACKGROUND WORKER LOOP (Auto-Restore Fast Mode)
     # =========================================================
     async def background_30s_loop(self):
-        global is_paused, last_activity_time, is_triggering_c, last_send_time, bot_mode
+        global bot_mode
         await self.wait_until_ready()
         
         while not self.is_closed():
             await asyncio.sleep(30)
-            
             time_since_admin = (datetime.now(timezone.utc) - last_admin_activity).total_seconds()
             time_since_player = (datetime.now(timezone.utc) - last_player_chat_time).total_seconds()
             
             if bot_mode == "slow" and time_since_player >= 300.0 and time_since_admin >= 600.0:
                 bot_mode = "fast"
                 print("[AUTO MODE] Ruangan dan Admin sepi. Kembali ke FAST MODE.")
-                
-            if is_paused or is_triggering_c: continue
 
-            time_silent = (datetime.now(timezone.utc) - last_activity_time).total_seconds()
-            if time_silent >= 90.0:
-                is_triggering_c = True
-                try:
-                    async with self.send_lock:
-                        target_channel = self.get_channel(TARGET_CHANNEL_ID)
-                        if target_channel:
-                            try:
-                                await target_channel.send("!c")
-                                last_send_time = datetime.now(timezone.utc)
-                            except: pass
-                finally:
-                    last_activity_time = datetime.now(timezone.utc)
-                    is_triggering_c = False
+main_client = MySelfBot()
 
-client = MySelfBot()
-client.run(TOKEN_DISCORD)
+# 🛑 START DUAL-CORE ENGINE
+async def run_bots():
+    await asyncio.gather(
+        main_client.start(TOKEN_DISCORD),
+        tumbal_client.start(TOKEN_TUMBAL)
+    )
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run_bots())
