@@ -524,7 +524,7 @@ class MySelfBot(discord.Client):
                 last_activity_time = datetime.now(timezone.utc)
             return
 
-        # INTERCEPTOR PLAYER (Abaikan Bot / App)
+        # INTERCEPTOR PLAYER
         if not is_me and not message.author.bot:
             if message.content and not message.content.startswith('!'):
                 wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
@@ -571,7 +571,7 @@ class MySelfBot(discord.Client):
         content_lower = full_text.lower()
 
         # =========================================================
-        # ALUR 1: DETEKSI TOMBOL "START CHALLENGE" 🎮
+        # ALUR 1: DETEKSI TOMBOL "START CHALLENGE" SECARA BUTA 🎮
         # =========================================================
         is_start_prompt = "start challenge" in content_lower or "needs" in content_lower or "players" in content_lower
         
@@ -601,8 +601,8 @@ class MySelfBot(discord.Client):
                         print("[MAIN BUTTON] Berhasil klik buta Start Challenge.")
                         self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
                     except Exception as e:
-                        print(f"[MAIN BUTTON ERROR] Gagal menekan tombol:")
-                        traceback.print_exc() # MENCETAK AKAR ERROR SECARA DETAIL
+                        print(f"[MAIN BUTTON ERROR] Gagal menekan tombol: {e}")
+                        traceback.print_exc()
                 
                 self.loop.create_task(execute_main_click())
 
@@ -769,5 +769,10 @@ async def run_bots():
     )
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(run_bots())
+    # FIX: Gunakan asyncio.new_event_loop() untuk kompatibilitas Python versi terbaru di Render
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(run_bots())
+    except KeyboardInterrupt:
+        pass
