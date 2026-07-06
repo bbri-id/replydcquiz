@@ -5,6 +5,7 @@ import os
 import re
 import json
 import logging
+import traceback
 from google import genai
 from flask import Flask, render_template_string, jsonify
 from threading import Thread
@@ -226,16 +227,13 @@ HTML_TEMPLATE = """
             try {
                 let res = await fetch('/api/data?_=' + new Date().getTime());
                 let data = await res.json();
-                
                 document.getElementById('start-str').innerText = data.start_str;
                 document.getElementById('uptime-str').innerText = data.uptime_str;
-                
                 let stealthEl = document.getElementById('stealth-str');
                 stealthEl.innerText = data.stealth_str;
                 if(data.stealth_str.includes("ADMIN") || data.stealth_str.includes("OFF")) stealthEl.style.color = "#ed4245";
                 else if(data.stealth_str.includes("Player")) stealthEl.style.color = "#faa61a";
                 else stealthEl.style.color = "#43b581";
-                
                 document.getElementById('val-xp').innerText = data.total_xp + " %";
                 document.getElementById('val-gold').innerText = data.total_gold;
                 document.getElementById('val-token').innerText = data.total_token;
@@ -243,7 +241,6 @@ HTML_TEMPLATE = """
                 document.getElementById('val-rare').innerText = data.rare_count + "x";
                 document.getElementById('rl-badge').innerText = data.rate_limit_count;
                 updateUI(data.paused, data.mode);
-                
                 let newLootHash = data.loots.length > 0 ? JSON.stringify(data.loots[0]) : "empty";
                 if (newLootHash !== lastLootHash) {
                     let html = "";
@@ -252,7 +249,6 @@ HTML_TEMPLATE = """
                     document.getElementById('table-body').innerHTML = html;
                     lastLootHash = newLootHash;
                 }
-
                 let newChatHash = data.chats.length > 0 ? JSON.stringify(data.chats[0]) : "empty";
                 if (newChatHash !== lastChatHash) {
                     let html = "";
@@ -263,22 +259,18 @@ HTML_TEMPLATE = """
                 }
             } catch (error) { console.error(error); }
         }
-
         async function toggleBot() {
             let btn = document.getElementById('toggle-btn'); btn.disabled = true;
             try { let res = await fetch('/api/toggle', { method: 'POST' }); let data = await res.json(); updateUI(data.paused, data.mode); } catch (e) {} btn.disabled = false;
         }
-
         async function toggleMode() {
             let btn = document.getElementById('toggle-mode-btn'); btn.disabled = true;
             try { let res = await fetch('/api/toggle_mode', { method: 'POST' }); let data = await res.json(); updateUI(data.paused, data.mode); } catch (e) {} btn.disabled = false;
         }
-
         async function toggleBarbar() {
             let btn = document.getElementById('barbar-btn'); btn.disabled = true;
             try { let res = await fetch('/api/toggle_barbar', { method: 'POST' }); let data = await res.json(); updateUI(data.paused, data.mode); } catch (e) {} btn.disabled = false;
         }
-
         function updateUI(isPaused, botMode) {
             let badgeStatus = document.getElementById('status-badge'), badgeMode = document.getElementById('mode-badge'), btn = document.getElementById('toggle-btn');
             if (isPaused) {
@@ -292,7 +284,6 @@ HTML_TEMPLATE = """
             else if (botMode === "fast") { badgeMode.innerHTML = "🏎️ FAST MODE"; badgeMode.style.color = "#faa61a"; }
             else { badgeMode.innerHTML = "🐢 SLOW MODE (Stealth/Manual)"; badgeMode.style.color = "#b9bbbe"; }
         }
-
         fetchAllData();
         setInterval(fetchAllData, 2000); 
         document.addEventListener("visibilitychange", function() { if (!document.hidden) fetchAllData(); });
@@ -314,7 +305,6 @@ def get_data():
     hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
     minutes, _ = divmod(remainder, 60)
     start_time_wib = START_TIME_UTC + timedelta(hours=7)
-    
     time_since_admin = (now_utc - last_admin_activity).total_seconds()
     time_since_player = (now_utc - last_player_chat_time).total_seconds()
     
@@ -433,7 +423,8 @@ async def trigger_tumbal_click(channel_id, message_id):
         if target_btn and not getattr(target_btn, 'disabled', False):
             await target_btn.click()
             print("[TUMBAL BUTTON] Berhasil menyusul klik Start Challenge secara buta.")
-    except Exception: pass 
+    except Exception as e: 
+        print(f"[TUMBAL BUTTON ERROR] {e}")
 
 
 # =========================================================
@@ -495,7 +486,25 @@ class MySelfBot(discord.Client):
         global consecutive_losses, next_loss_target
         global last_clicked_btn_msg_id
 
-        # 🕵️ RADAR ADMIN
+        if message.channel.id != TARGET_CHANNEL_ID: return
+
+        # ==========================================
+        # 🛠️ DEBUG MODE: CETAK SEMUA PESAN DI RENDER
+        # ==========================================
+        print("\n--- [DEBUG MESSAGE RADAR] ---")
+        print(f"Author: {message.author.name} (Bot: {message.author.bot})")
+        print(f"Content: {message.content}")
+        if message.embeds:
+            print(f"Embeds: {len(message.embeds)}")
+            for e in message.embeds: print(f" - Title: {e.title} | Desc: {e.description}")
+        if message.components:
+            print(f"Components found:")
+            for row in message.components:
+                for child in getattr(row, 'children', []):
+                    print(f"  -> Type: {getattr(child, 'type', 'N/A')}, Label: {getattr(child, 'label', 'N/A')}, Custom ID: {getattr(child, 'custom_id', 'N/A')}")
+        print("-----------------------------\n")
+
+        # RADAR ADMIN
         author_name = message.author.name.lower()
         author_display = message.author.display_name.lower()
         if any(admin in author_name or admin in author_display for admin in ["ternate", "pandansex"]):
@@ -504,7 +513,9 @@ class MySelfBot(discord.Client):
                 bot_mode = "slow"
                 print(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 10 Menit.")
 
-        if message.author.id == self.user.id:
+        # SAKLAR REMOTE CONTROL
+        is_me = (message.author.id == self.user.id)
+        if is_me:
             msg_lower = message.content.lower()
             if "rame" in msg_lower and not is_paused:
                 is_paused = True
@@ -513,14 +524,8 @@ class MySelfBot(discord.Client):
                 last_activity_time = datetime.now(timezone.utc)
             return
 
-        if message.channel.id != TARGET_CHANNEL_ID: return
-
-        # 🛑 WHITELIST FIX: LIONNSEX SELALU LOLOS MESKIPUN BER-BADGE "APP"
-        is_target_user = (message.author.id == TARGET_USER_ID)
-        is_lionnsex = ("lion" in message.author.name.lower() or "nsex" in message.author.name.lower())
-
-        # 🕵️ ALUR INTERCEPTOR: DETEKSI CHAT PLAYER LAIN & AUTO-REPLY TAG
-        if not is_target_user and not is_lionnsex:
+        # INTERCEPTOR PLAYER (Abaikan Bot / App)
+        if not is_me and not message.author.bot:
             if message.content and not message.content.startswith('!'):
                 wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
                 chat_history = load_json_db(CHAT_DB_FILE)
@@ -550,7 +555,6 @@ class MySelfBot(discord.Client):
 
         last_activity_time = datetime.now(timezone.utc)
 
-        # 🛑 PINDAHKAN PEMBACAAN TEKS KE ATAS AGAR BISA MENDETEKSI TOMBOL
         full_text = ""
         image_urls = []
         if message.embeds:
@@ -567,7 +571,7 @@ class MySelfBot(discord.Client):
         content_lower = full_text.lower()
 
         # =========================================================
-        # ALUR 1: DETEKSI TOMBOL "START CHALLENGE" SECARA BUTA 🎮
+        # ALUR 1: DETEKSI TOMBOL "START CHALLENGE" 🎮
         # =========================================================
         is_start_prompt = "start challenge" in content_lower or "needs" in content_lower or "players" in content_lower
         
@@ -576,10 +580,8 @@ class MySelfBot(discord.Client):
             for row in message.components:
                 for child in getattr(row, 'children', []):
                     if hasattr(child, 'click'):
-                        label = str(getattr(child, 'label', '')).lower()
-                        if "start" in label or "challenge" in label or not label:
-                            target_btn = child
-                            break
+                        target_btn = child
+                        break
                 if target_btn: break
                 
         if target_btn and message.id != last_clicked_btn_msg_id:
@@ -599,7 +601,8 @@ class MySelfBot(discord.Client):
                         print("[MAIN BUTTON] Berhasil klik buta Start Challenge.")
                         self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
                     except Exception as e:
-                        print(f"[MAIN BUTTON ERROR] Gagal menekan tombol: {e}")
+                        print(f"[MAIN BUTTON ERROR] Gagal menekan tombol:")
+                        traceback.print_exc() # MENCETAK AKAR ERROR SECARA DETAIL
                 
                 self.loop.create_task(execute_main_click())
 
