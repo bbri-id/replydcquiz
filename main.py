@@ -226,13 +226,16 @@ HTML_TEMPLATE = """
             try {
                 let res = await fetch('/api/data?_=' + new Date().getTime());
                 let data = await res.json();
+                
                 document.getElementById('start-str').innerText = data.start_str;
                 document.getElementById('uptime-str').innerText = data.uptime_str;
+                
                 let stealthEl = document.getElementById('stealth-str');
                 stealthEl.innerText = data.stealth_str;
                 if(data.stealth_str.includes("ADMIN") || data.stealth_str.includes("OFF")) stealthEl.style.color = "#ed4245";
                 else if(data.stealth_str.includes("Player")) stealthEl.style.color = "#faa61a";
                 else stealthEl.style.color = "#43b581";
+                
                 document.getElementById('val-xp').innerText = data.total_xp + " %";
                 document.getElementById('val-gold').innerText = data.total_gold;
                 document.getElementById('val-token').innerText = data.total_token;
@@ -240,6 +243,7 @@ HTML_TEMPLATE = """
                 document.getElementById('val-rare').innerText = data.rare_count + "x";
                 document.getElementById('rl-badge').innerText = data.rate_limit_count;
                 updateUI(data.paused, data.mode);
+                
                 let newLootHash = data.loots.length > 0 ? JSON.stringify(data.loots[0]) : "empty";
                 if (newLootHash !== lastLootHash) {
                     let html = "";
@@ -248,6 +252,7 @@ HTML_TEMPLATE = """
                     document.getElementById('table-body').innerHTML = html;
                     lastLootHash = newLootHash;
                 }
+
                 let newChatHash = data.chats.length > 0 ? JSON.stringify(data.chats[0]) : "empty";
                 if (newChatHash !== lastChatHash) {
                     let html = "";
@@ -258,18 +263,22 @@ HTML_TEMPLATE = """
                 }
             } catch (error) { console.error(error); }
         }
+
         async function toggleBot() {
             let btn = document.getElementById('toggle-btn'); btn.disabled = true;
             try { let res = await fetch('/api/toggle', { method: 'POST' }); let data = await res.json(); updateUI(data.paused, data.mode); } catch (e) {} btn.disabled = false;
         }
+
         async function toggleMode() {
             let btn = document.getElementById('toggle-mode-btn'); btn.disabled = true;
             try { let res = await fetch('/api/toggle_mode', { method: 'POST' }); let data = await res.json(); updateUI(data.paused, data.mode); } catch (e) {} btn.disabled = false;
         }
+
         async function toggleBarbar() {
             let btn = document.getElementById('barbar-btn'); btn.disabled = true;
             try { let res = await fetch('/api/toggle_barbar', { method: 'POST' }); let data = await res.json(); updateUI(data.paused, data.mode); } catch (e) {} btn.disabled = false;
         }
+
         function updateUI(isPaused, botMode) {
             let badgeStatus = document.getElementById('status-badge'), badgeMode = document.getElementById('mode-badge'), btn = document.getElementById('toggle-btn');
             if (isPaused) {
@@ -283,6 +292,7 @@ HTML_TEMPLATE = """
             else if (botMode === "fast") { badgeMode.innerHTML = "🏎️ FAST MODE"; badgeMode.style.color = "#faa61a"; }
             else { badgeMode.innerHTML = "🐢 SLOW MODE (Stealth/Manual)"; badgeMode.style.color = "#b9bbbe"; }
         }
+
         fetchAllData();
         setInterval(fetchAllData, 2000); 
         document.addEventListener("visibilitychange", function() { if (!document.hidden) fetchAllData(); });
@@ -304,6 +314,7 @@ def get_data():
     hours, remainder = divmod(int(uptime_delta.total_seconds()), 3600)
     minutes, _ = divmod(remainder, 60)
     start_time_wib = START_TIME_UTC + timedelta(hours=7)
+    
     time_since_admin = (now_utc - last_admin_activity).total_seconds()
     time_since_player = (now_utc - last_player_chat_time).total_seconds()
     
@@ -413,13 +424,13 @@ async def trigger_tumbal_click(channel_id, message_id):
         target_btn = None
         if msg.components:
             for row in msg.components:
-                for child in row.children:
-                    if getattr(child, 'type', None) == discord.ComponentType.button:
+                for child in getattr(row, 'children', []):
+                    if hasattr(child, 'click'):
                         target_btn = child
                         break
                 if target_btn: break
         
-        if target_btn and not target_btn.disabled:
+        if target_btn and not getattr(target_btn, 'disabled', False):
             await target_btn.click()
             print("[TUMBAL BUTTON] Berhasil menyusul klik Start Challenge secara buta.")
     except Exception: pass 
@@ -484,6 +495,7 @@ class MySelfBot(discord.Client):
         global consecutive_losses, next_loss_target
         global last_clicked_btn_msg_id
 
+        # 🕵️ RADAR ADMIN
         author_name = message.author.name.lower()
         author_display = message.author.display_name.lower()
         if any(admin in author_name or admin in author_display for admin in ["ternate", "pandansex"]):
@@ -503,8 +515,12 @@ class MySelfBot(discord.Client):
 
         if message.channel.id != TARGET_CHANNEL_ID: return
 
-        is_other_player = (not message.author.bot) and (message.author.id != TARGET_USER_ID)
-        if is_other_player:
+        # 🛑 WHITELIST FIX: LIONNSEX SELALU LOLOS MESKIPUN BER-BADGE "APP"
+        is_target_user = (message.author.id == TARGET_USER_ID)
+        is_lionnsex = ("lion" in message.author.name.lower() or "nsex" in message.author.name.lower())
+
+        # 🕵️ ALUR INTERCEPTOR: DETEKSI CHAT PLAYER LAIN & AUTO-REPLY TAG
+        if not is_target_user and not is_lionnsex:
             if message.content and not message.content.startswith('!'):
                 wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
                 chat_history = load_json_db(CHAT_DB_FILE)
@@ -525,8 +541,6 @@ class MySelfBot(discord.Client):
                         print(f"[TAG DETECTED] Di-tag oleh {message.author.name}. AI menyiapkan balasan...")
                         self.loop.create_task(self.send_tag_reply(message.channel))
             return 
-        
-        if message.author.bot == False and message.author.id != TARGET_USER_ID: return
 
         try:
             msg_date = message.created_at
@@ -555,15 +569,17 @@ class MySelfBot(discord.Client):
         # =========================================================
         # ALUR 1: DETEKSI TOMBOL "START CHALLENGE" SECARA BUTA 🎮
         # =========================================================
-        is_start_prompt = "wants to start a challenge" in content_lower or "start challenge?" in content_lower or "needs 2 players to click" in content_lower
+        is_start_prompt = "start challenge" in content_lower or "needs" in content_lower or "players" in content_lower
         
         target_btn = None
         if is_start_prompt and message.components:
             for row in message.components:
-                for child in row.children:
-                    if getattr(child, 'type', None) == discord.ComponentType.button:
-                        target_btn = child
-                        break
+                for child in getattr(row, 'children', []):
+                    if hasattr(child, 'click'):
+                        label = str(getattr(child, 'label', '')).lower()
+                        if "start" in label or "challenge" in label or not label:
+                            target_btn = child
+                            break
                 if target_btn: break
                 
         if target_btn and message.id != last_clicked_btn_msg_id:
