@@ -11,6 +11,9 @@ from flask import Flask, render_template_string, jsonify
 from threading import Thread
 from datetime import datetime, timedelta, timezone
 
+# 🛑 MEMAKSA RENDER MENCETAK LOG SECARA REAL-TIME
+logging.basicConfig(level=logging.WARNING, format='%(message)s')
+
 # =========================================================
 # 1. VARIABEL GLOBAL & TOKEN (SECURE)
 # =========================================================
@@ -21,7 +24,7 @@ TARGET_CHANNEL_ID = int(os.getenv('TARGET_CHANNEL_ID')) if os.getenv('TARGET_CHA
 TOKEN_TUMBAL = os.getenv('DISCORD_TOKEN_TUMBAL')
 
 if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID or not TARGET_CHANNEL_ID or not TOKEN_TUMBAL:
-    print("Error: Variabel lingkungan belum diisi lengkap! Pastikan TOKEN_TUMBAL juga sudah ditambahkan di .env/Render.")
+    logging.warning("Error: Variabel lingkungan belum diisi lengkap! Pastikan TOKEN_TUMBAL juga sudah ditambahkan di .env/Render.")
     exit(1)
 
 START_TIME_UTC = datetime.now(timezone.utc)
@@ -54,6 +57,42 @@ next_idle_chat_target = random.randint(5, 20)
 consecutive_losses = 0
 next_loss_target = random.randint(5, 7)
 
+
+# =========================================================
+# FUNGSI BYPASS API: MERETAS TOMBOL APP (ANTI 50035 ERROR)
+# =========================================================
+async def force_click_button(bot_client, message, button):
+    try:
+        session_id = getattr(bot_client.ws, 'session_id', None)
+        
+        # Tarik Application ID (Krusial untuk tombol APP baru)
+        app_id = getattr(message, 'application_id', None)
+        if not app_id: app_id = message.author.id
+
+        payload = {
+            "type": 3,
+            "nonce": str(discord.utils.time_snowflake(datetime.now(timezone.utc))),
+            "guild_id": str(message.guild.id) if message.guild else None,
+            "channel_id": str(message.channel.id),
+            "message_flags": 0,
+            "message_id": str(message.id),
+            "application_id": str(app_id),
+            "session_id": session_id,
+            "data": {
+                "component_type": 2, 
+                "custom_id": button.custom_id
+            }
+        }
+        if payload["guild_id"] is None: del payload["guild_id"]
+
+        route = discord.http.Route("POST", "/interactions")
+        await bot_client.http.request(route, json=payload)
+        return True
+    except Exception as e:
+        logging.warning(f"[BYPASS API ERROR - {bot_client.user}]: {e}")
+        return False
+
+
 # =========================================================
 # 2. PENCEGAT LOG & AI
 # =========================================================
@@ -67,7 +106,6 @@ class RateLimitHandler(logging.Handler):
 
 rl_handler = RateLimitHandler()
 logging.getLogger('discord.http').addHandler(rl_handler)
-logging.basicConfig(level=logging.INFO)
 
 ai_client = genai.Client(api_key=API_KEY_GEMINI)
 
@@ -400,7 +438,7 @@ class TumbalBot(discord.Client):
         super().__init__(*args, **kwargs)
 
     async def on_ready(self):
-        print(f"[TUMBAL] Hadir sebagai Jari Tambahan: {self.user} (Invisible Mode)")
+        logging.warning(f"[TUMBAL] Hadir sebagai Jari Tambahan: {self.user} (Invisible Mode)")
 
 tumbal_client = TumbalBot(status=discord.Status.invisible)
 
@@ -421,10 +459,14 @@ async def trigger_tumbal_click(channel_id, message_id):
                 if target_btn: break
         
         if target_btn and not getattr(target_btn, 'disabled', False):
-            await target_btn.click()
-            print("[TUMBAL BUTTON] Berhasil menyusul klik Start Challenge secara buta.")
+            logging.warning("[TUMBAL BUTTON] Mengeksekusi Bypass Klik...")
+            success = await force_click_button(tumbal_client, msg, target_btn)
+            if not success:
+                # Fallback ke cara normal
+                await target_btn.click()
+                logging.warning("[TUMBAL BUTTON] Berhasil menyusul klik via metode normal.")
     except Exception as e: 
-        print(f"[TUMBAL BUTTON ERROR] {e}")
+        logging.warning(f"[TUMBAL BUTTON ERROR] {e}")
 
 
 # =========================================================
@@ -439,8 +481,8 @@ class MySelfBot(discord.Client):
         global client
         client = self
         if self.send_lock is None: self.send_lock = asyncio.Lock()
-        print(f"[MAIN] Self-bot aktif sebagai: {self.user}")
-        print(f"=== MULTI-MODE & DASHBOARD AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===")
+        logging.warning(f"[MAIN] Self-bot aktif sebagai: {self.user}")
+        logging.warning(f"=== MULTI-MODE & DASHBOARD AKTIF: TARGET CHANNEL {TARGET_CHANNEL_ID} ===")
 
     async def send_idle_chat(self):
         history_str = ", ".join(list(used_idle_chats)[-10:]) if used_idle_chats else "belum ada"
@@ -451,7 +493,7 @@ class MySelfBot(discord.Client):
             await asyncio.sleep(random.uniform(2.0, 5.0))
             target = self.get_channel(TARGET_CHANNEL_ID)
             if target: 
-                print(f"[AI CHAT] Mengeluh Pegel: {msg}")
+                logging.warning(f"[AI CHAT] Mengeluh Pegel: {msg}")
                 await target.send(msg)
 
     async def send_loss_streak_chat(self):
@@ -466,7 +508,7 @@ class MySelfBot(discord.Client):
             await asyncio.sleep(random.uniform(3.0, 6.0))
             target = self.get_channel(TARGET_CHANNEL_ID)
             if target: 
-                print(f"[AI CHAT] Kesalip Streak: {msg}")
+                logging.warning(f"[AI CHAT] Kesalip Streak: {msg}")
                 await target.send(msg)
 
     async def send_tag_reply(self, channel):
@@ -474,7 +516,7 @@ class MySelfBot(discord.Client):
         msg = await generate_gemini_text(prompt)
         if msg:
             await asyncio.sleep(random.uniform(2.0, 6.0))
-            print(f"[AI CHAT] Membalas Tag: {msg}")
+            logging.warning(f"[AI CHAT] Membalas Tag: {msg}")
             await channel.send(msg)
 
     async def process_discord_event(self, message):
@@ -491,18 +533,18 @@ class MySelfBot(discord.Client):
         # ==========================================
         # 🛠️ DEBUG MODE: CETAK SEMUA PESAN DI RENDER
         # ==========================================
-        print("\n--- [DEBUG MESSAGE RADAR] ---")
-        print(f"Author: {message.author.name} (Bot: {message.author.bot})")
-        print(f"Content: {message.content}")
+        logging.warning("\n--- [DEBUG MESSAGE RADAR] ---")
+        logging.warning(f"Author: {message.author.name} (Bot: {message.author.bot})")
+        logging.warning(f"Content: {message.content}")
         if message.embeds:
-            print(f"Embeds: {len(message.embeds)}")
-            for e in message.embeds: print(f" - Title: {e.title} | Desc: {e.description}")
+            logging.warning(f"Embeds: {len(message.embeds)}")
+            for e in message.embeds: logging.warning(f" - Title: {e.title} | Desc: {e.description}")
         if message.components:
-            print(f"Components found:")
+            logging.warning(f"Components found:")
             for row in message.components:
                 for child in getattr(row, 'children', []):
-                    print(f"  -> Type: {getattr(child, 'type', 'N/A')}, Label: {getattr(child, 'label', 'N/A')}, Custom ID: {getattr(child, 'custom_id', 'N/A')}")
-        print("-----------------------------\n")
+                    logging.warning(f"  -> Type: {getattr(child, 'type', 'N/A')}, Custom ID: {getattr(child, 'custom_id', 'N/A')}")
+        logging.warning("-----------------------------\n")
 
         # RADAR ADMIN
         author_name = message.author.name.lower()
@@ -511,7 +553,7 @@ class MySelfBot(discord.Client):
             last_admin_activity = datetime.now(timezone.utc)
             if bot_mode == "fast":
                 bot_mode = "slow"
-                print(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 10 Menit.")
+                logging.warning(f"[🚨 ADMIN ALERT] Admin beraktivitas! Kunci SLOW MODE 10 Menit.")
 
         # SAKLAR REMOTE CONTROL
         is_me = (message.author.id == self.user.id)
@@ -535,7 +577,7 @@ class MySelfBot(discord.Client):
                 last_player_chat_time = datetime.now(timezone.utc)
                 if bot_mode == "fast":
                     bot_mode = "slow"
-                    print(f"[STEALTH ALERT] Player {message.author.name} mengetik! Tiarap ke SLOW MODE.")
+                    logging.warning(f"[STEALTH ALERT] Player {message.author.name} mengetik! Tiarap ke SLOW MODE.")
 
                 is_mentioned = str(self.user.id) in message.content
                 is_replied = message.reference and getattr(message.reference.resolved, 'author', None) and message.reference.resolved.author.id == self.user.id
@@ -543,7 +585,7 @@ class MySelfBot(discord.Client):
                     time_since_tag = (datetime.now(timezone.utc) - last_tag_reply_time).total_seconds()
                     if time_since_tag >= 120.0:
                         last_tag_reply_time = datetime.now(timezone.utc)
-                        print(f"[TAG DETECTED] Di-tag oleh {message.author.name}. AI menyiapkan balasan...")
+                        logging.warning(f"[TAG DETECTED] Di-tag oleh {message.author.name}. AI menyiapkan balasan...")
                         self.loop.create_task(self.send_tag_reply(message.channel))
             return 
 
@@ -571,7 +613,7 @@ class MySelfBot(discord.Client):
         content_lower = full_text.lower()
 
         # =========================================================
-        # ALUR 1: DETEKSI TOMBOL "START CHALLENGE" SECARA BUTA 🎮
+        # ALUR 1: DETEKSI TOMBOL "START CHALLENGE" 🎮
         # =========================================================
         is_start_prompt = "start challenge" in content_lower or "needs" in content_lower or "players" in content_lower
         
@@ -592,17 +634,22 @@ class MySelfBot(discord.Client):
                 elif bot_mode == "fast": click_delay = random.uniform(1.0, 2.0)
                 else: click_delay = random.uniform(0.3, 0.8) 
                     
-                print(f"[MAIN BUTTON] Target klik buta ditemukan! Eksekusi dalam {click_delay:.2f}s")
+                logging.warning(f"[MAIN BUTTON] Target klik ditemukan! Eksekusi bypass dalam {click_delay:.2f}s")
                 
                 async def execute_main_click():
                     await asyncio.sleep(click_delay)
                     try:
-                        await target_btn.click()
-                        print("[MAIN BUTTON] Berhasil klik buta Start Challenge.")
-                        self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
+                        success = await force_click_button(self, message, target_btn)
+                        if success:
+                            logging.warning("[MAIN BUTTON] Berhasil bypass klik Start Challenge.")
+                            self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
+                        else:
+                            # Jika API Bypass gagal, kita coba cara library bawaan sebagai harapan terakhir
+                            await target_btn.click()
+                            logging.warning("[MAIN BUTTON] Berhasil klik normal Start Challenge.")
+                            self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
                     except Exception as e:
-                        print(f"[MAIN BUTTON ERROR] Gagal menekan tombol: {e}")
-                        traceback.print_exc()
+                        logging.warning(f"[MAIN BUTTON ERROR] Semua metode klik gagal: {e}")
                 
                 self.loop.create_task(execute_main_click())
 
@@ -741,7 +788,7 @@ class MySelfBot(discord.Client):
                         typing_speed = random.uniform(0.05, 0.08)
                         
                     dynamic_delay = reaction_time + (char_count * typing_speed)
-                    print(f"[TYPING] Mode {bot_mode.upper()} - Kata: {char_count} huruf. Delay: {dynamic_delay:.2f} detik.")
+                    logging.warning(f"[TYPING] Mode {bot_mode.upper()} - Kata: {char_count} huruf. Delay: {dynamic_delay:.2f} detik.")
                     await asyncio.sleep(dynamic_delay)
                         
                     if quiz_solved_time > current_quiz_start:
@@ -769,7 +816,6 @@ async def run_bots():
     )
 
 if __name__ == "__main__":
-    # FIX: Gunakan asyncio.new_event_loop() untuk kompatibilitas Python versi terbaru di Render
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
