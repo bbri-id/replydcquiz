@@ -57,15 +57,12 @@ next_idle_chat_target = random.randint(5, 20)
 consecutive_losses = 0
 next_loss_target = random.randint(5, 7)
 
-
 # =========================================================
 # FUNGSI BYPASS API: MERETAS TOMBOL APP (ANTI 50035 ERROR)
 # =========================================================
 async def force_click_button(bot_client, message, button):
     try:
         session_id = getattr(bot_client.ws, 'session_id', None)
-        
-        # Tarik Application ID (Krusial untuk tombol APP baru)
         app_id = getattr(message, 'application_id', None)
         if not app_id: app_id = message.author.id
 
@@ -295,7 +292,7 @@ HTML_TEMPLATE = """
                     document.getElementById('chat-body').innerHTML = html;
                     lastChatHash = newChatHash;
                 }
-            } catch (error) { console.error(error); }
+            } catch (error) {}
         }
         async function toggleBot() {
             let btn = document.getElementById('toggle-btn'); btn.disabled = true;
@@ -454,6 +451,8 @@ async def trigger_tumbal_click(channel_id, message_id):
             for row in msg.components:
                 for child in getattr(row, 'children', []):
                     if hasattr(child, 'click'):
+                        cid = str(getattr(child, 'custom_id', '')).lower()
+                        if "pending" in cid: continue
                         target_btn = child
                         break
                 if target_btn: break
@@ -462,7 +461,6 @@ async def trigger_tumbal_click(channel_id, message_id):
             logging.warning("[TUMBAL BUTTON] Mengeksekusi Bypass Klik...")
             success = await force_click_button(tumbal_client, msg, target_btn)
             if not success:
-                # Fallback ke cara normal
                 await target_btn.click()
                 logging.warning("[TUMBAL BUTTON] Berhasil menyusul klik via metode normal.")
     except Exception as e: 
@@ -622,6 +620,10 @@ class MySelfBot(discord.Client):
             for row in message.components:
                 for child in getattr(row, 'children', []):
                     if hasattr(child, 'click'):
+                        cid = str(getattr(child, 'custom_id', '')).lower()
+                        if "pending" in cid:
+                            logging.warning("[RADAR] Tombol masih 'pending', menahan klik...")
+                            continue
                         target_btn = child
                         break
                 if target_btn: break
@@ -634,7 +636,7 @@ class MySelfBot(discord.Client):
                 elif bot_mode == "fast": click_delay = random.uniform(1.0, 2.0)
                 else: click_delay = random.uniform(0.3, 0.8) 
                     
-                logging.warning(f"[MAIN BUTTON] Target klik ditemukan! Eksekusi bypass dalam {click_delay:.2f}s")
+                logging.warning(f"[MAIN BUTTON] Target ID asli ditemukan! Eksekusi klik dalam {click_delay:.2f}s")
                 
                 async def execute_main_click():
                     await asyncio.sleep(click_delay)
@@ -644,12 +646,12 @@ class MySelfBot(discord.Client):
                             logging.warning("[MAIN BUTTON] Berhasil bypass klik Start Challenge.")
                             self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
                         else:
-                            # Jika API Bypass gagal, kita coba cara library bawaan sebagai harapan terakhir
                             await target_btn.click()
                             logging.warning("[MAIN BUTTON] Berhasil klik normal Start Challenge.")
                             self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
                     except Exception as e:
                         logging.warning(f"[MAIN BUTTON ERROR] Semua metode klik gagal: {e}")
+                        traceback.print_exc()
                 
                 self.loop.create_task(execute_main_click())
 
