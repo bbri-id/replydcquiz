@@ -189,8 +189,15 @@ HTML_TEMPLATE = """
         table { width: 100%; border-collapse: collapse; }
         tbody td { padding: 6px 8px; border-bottom: 1px solid #202225; font-size: 0.9em; word-wrap: break-word; }
         .chat-author { color: #5865F2; font-weight: bold; }
-        .reply-btn { background: transparent; border: 1px solid #5865F2; color: #5865F2; border-radius: 3px; cursor: pointer; padding: 2px 5px; font-size: 0.8em; margin-left: 5px;}
+        
+        /* Modifikasi Styling Tombol Reply & Go */
+        .reply-btn { background: transparent; border: 1px solid #5865F2; color: #5865F2; border-radius: 3px; cursor: pointer; padding: 2px 5px; font-size: 0.8em; margin-left: 5px; transition: 0.2s;}
+        .reply-btn:hover { background: #5865F2; color: #fff; }
         .replied-badge { color: #43b581; font-size: 0.8em; margin-left: 5px; border: 1px solid #43b581; padding: 1px 4px; border-radius: 3px; }
+        .jump-btn { background: transparent; border: 1px solid #faa61a; color: #faa61a; border-radius: 3px; cursor: pointer; padding: 2px 5px; font-size: 0.8em; margin-left: 5px; text-decoration: none; transition: 0.2s;}
+        .jump-btn:hover { background: #faa61a; color: #1e1e24; }
+        .action-group { display: inline-block; margin-top: 2px; }
+        
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #4f545c; border-radius: 4px; }
@@ -264,10 +271,10 @@ HTML_TEMPLATE = """
                     let html = ""; data.loots.slice(0, 5).forEach(l => { 
                         let rewColor = "#fff";
                         let rewLower = l.reward.toLowerCase();
-                        if (rewLower.includes("xp") || rewLower.includes("%")) rewColor = "#43b581"; // XP: Hijau
-                        else if (rewLower.includes("gold")) rewColor = "#faa61a"; // Gold: Kuning
-                        else if (rewLower.includes("token")) rewColor = "#5865F2"; // Token: Biru
-                        else if (rewLower.includes("tp") || rewLower.includes("ss") || rewLower.includes("rare")) rewColor = "#ed4245"; // TP/SS: Merah
+                        if (rewLower.includes("xp") || rewLower.includes("%")) rewColor = "#43b581"; 
+                        else if (rewLower.includes("gold")) rewColor = "#faa61a"; 
+                        else if (rewLower.includes("token")) rewColor = "#5865F2"; 
+                        else if (rewLower.includes("tp") || rewLower.includes("ss") || rewLower.includes("rare")) rewColor = "#ed4245"; 
                         
                         let botAns = l.bot_answer || l.answer;
                         html += `<tr>
@@ -282,8 +289,19 @@ HTML_TEMPLATE = """
                 let newChatHash = data.chats.length > 0 ? JSON.stringify(data.chats[0]) : "empty";
                 if (newChatHash !== lastChatHash) {
                     let html = ""; data.chats.forEach(c => { 
-                        let replyBtn = c.replied ? `<span class="replied-badge">✅ Replied</span>` : `<button class="reply-btn" onclick="replyMsg('${c.msg_id}', '${c.author}')">Balas</button>`;
-                        html += `<tr><td><span style="font-size:0.7em;color:#72767d">${c.time.split(' ')[0]}</span> <span class="chat-author">${c.author}</span>: ${c.content} ${replyBtn}</td></tr>`; 
+                        let gId = c.guild_id ? c.guild_id : "@me";
+                        let cId = c.channel_id ? c.channel_id : data.target_channel_id;
+                        let jumpUrl = `https://discord.com/channels/${gId}/${cId}/${c.msg_id}`;
+                        
+                        let actionBtns = "";
+                        if (c.replied) {
+                            actionBtns = `<span class="replied-badge">✅ Replied</span> <button class="reply-btn" onclick="replyMsg('${c.msg_id}', '${c.author}')">Balas (lagi)</button>`;
+                        } else {
+                            actionBtns = `<button class="reply-btn" onclick="replyMsg('${c.msg_id}', '${c.author}')">Balas</button>`;
+                        }
+                        actionBtns += ` <a href="${jumpUrl}" target="_blank" class="jump-btn">🔗 Go</a>`;
+
+                        html += `<tr><td><span style="font-size:0.7em;color:#72767d">${c.time.split(' ')[0]}</span> <span class="chat-author">${c.author}</span>: ${c.content} <div class="action-group">${actionBtns}</div></td></tr>`; 
                     });
                     document.getElementById('chat-body').innerHTML = html; lastChatHash = newChatHash;
                 }
@@ -336,7 +354,8 @@ def get_data():
         "uptime_str": f"{hours}h {minutes}m", "stealth_str": stealth_str, 
         "total_xp": session_total_xp, "total_gold": session_total_gold, "total_token": session_total_token, 
         "total_tp": session_total_tp, "rare_count": session_rare_count,
-        "loots": loots, "chats": chats, "paused": is_paused, "mode": bot_mode, "rate_limit_count": rate_limit_count
+        "loots": loots, "chats": chats, "paused": is_paused, "mode": bot_mode, "rate_limit_count": rate_limit_count,
+        "target_channel_id": str(TARGET_CHANNEL_ID)
     })
 
 @app.route('/api/toggle', methods=['POST'])
@@ -422,7 +441,6 @@ class MySelfBot(discord.Client):
         global client; client = self
         logging.warning(f"[MAIN] Self-bot aktif: {self.user}")
         self.loop.create_task(self.process_web_queue())
-        # FIX: Loop pengawas Auto-Restore Fast Mode diaktifkan kembali!
         self.loop.create_task(self.background_30s_loop())
 
     async def background_30s_loop(self):
@@ -433,7 +451,6 @@ class MySelfBot(discord.Client):
             time_since_admin = (datetime.now(timezone.utc) - last_admin_activity).total_seconds()
             time_since_player = (datetime.now(timezone.utc) - last_player_chat_time).total_seconds()
             
-            # Jika ruangan aman dari Admin (10 menit) dan Player (5 menit), gaspol lagi ke FAST!
             if bot_mode == "slow" and time_since_player >= 300.0 and time_since_admin >= 600.0:
                 bot_mode = "fast"
                 logging.warning("[AUTO MODE] Kondisi aman (Sepi). Kembali ke FAST MODE.")
@@ -522,13 +539,23 @@ class MySelfBot(discord.Client):
             elif "capek" in message.content.lower() and is_paused: is_paused = False; last_activity_time = datetime.now(timezone.utc)
             return
 
-        # INTERCEPTOR PLAYER
+        # INTERCEPTOR PLAYER (Merekam Guild ID & Channel ID untuk Jump URL)
         if not is_me and not message.author.bot:
             if message.content and not message.content.startswith('!'):
                 wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
                 chat_history = load_json_db(CHAT_DB_FILE)
-                # Tambahkan default parameter replied: False
-                chat_history.insert(0, {"time": wib_time.strftime('%H:%M:%S WIB'), "author": message.author.name, "content": message.content, "msg_id": str(message.id), "replied": False})
+                
+                guild_id = str(message.guild.id) if getattr(message, 'guild', None) else "@me"
+                
+                chat_history.insert(0, {
+                    "time": wib_time.strftime('%H:%M:%S WIB'), 
+                    "author": message.author.name, 
+                    "content": message.content, 
+                    "msg_id": str(message.id), 
+                    "guild_id": guild_id,
+                    "channel_id": str(message.channel.id),
+                    "replied": False
+                })
                 save_json_db(CHAT_DB_FILE, chat_history)
 
                 last_player_chat_time = datetime.now(timezone.utc)
@@ -598,7 +625,6 @@ class MySelfBot(discord.Client):
 
                     history = load_json_db(DB_FILE)
                     if not (len(history) > 0 and history[0].get("answer") == str_answer and history[0].get("reward") == str_reward):
-                        # Simpan last_typed_answer agar kita tahu apa yang diketik oleh bot saat Typo logic berjalan
                         history.insert(0, {"time": (datetime.now(timezone.utc) + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M:%S'), "answer": str_answer, "bot_answer": last_typed_answer, "reward": str_reward})
                         save_json_db(DB_FILE, history)
                         
@@ -662,7 +688,7 @@ class MySelfBot(discord.Client):
             if final_answer and success:
                 final_answer, is_typo = apply_human_typing(final_answer)
                 session_last_answer_was_typo = is_typo 
-                last_typed_answer = final_answer # Memori untuk log reward
+                last_typed_answer = final_answer 
                 
                 async with self.send_lock:
                     reaction_time = random.uniform(1.5, 3.0) if bot_mode == "slow" else (random.uniform(0.5, 1.0) if bot_mode == "fast" else random.uniform(0.1, 0.3))
