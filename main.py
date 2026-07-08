@@ -49,7 +49,7 @@ session_total_gold = 0
 session_total_token = 0
 session_total_tp = 0
 session_rare_count = 0
-session_mail_count = 0  # 🛑 NEW: TRACKER MAILBOX
+session_mail_count = 0  # Tracker untuk Total Jawaban Benar (Wins)
 
 used_idle_chats = set()
 quiz_solved_counter = 0
@@ -230,7 +230,7 @@ HTML_TEMPLATE = """
             <span class="stat-badge">T: <b id="val-token">0</b></span>
             <span class="stat-badge">TP/SS: <b id="val-tp">0</b></span>
             <span class="stat-badge">Rare: <b id="val-rare">0</b></span>
-            <span class="stat-badge">Mail: <b id="val-mail">0</b></span> <!-- 🛑 NEW TRACKER UI -->
+            <span class="stat-badge">Wins: <b id="val-mail">0</b></span>
         </div>
         <div class="btn-wrapper">
             <button class="btn btn-reset" onclick="requestNotif()" id="notif-btn">🔔 Notif</button>
@@ -283,7 +283,7 @@ HTML_TEMPLATE = """
                 document.getElementById('val-xp').innerText = data.total_xp + "%"; document.getElementById('val-gold').innerText = data.total_gold;
                 document.getElementById('val-token').innerText = data.total_token; document.getElementById('val-tp').innerText = data.total_tp;
                 document.getElementById('val-rare').innerText = data.rare_count; 
-                document.getElementById('val-mail').innerText = data.mail_count; // 🛑 NEW DATA INJECTION
+                document.getElementById('val-mail').innerText = data.mail_count;
                 document.getElementById('rl-badge').innerText = data.rate_limit_count;
                 
                 let modeBtn = document.getElementById('toggle-mode-btn');
@@ -667,9 +667,6 @@ class MySelfBot(discord.Client):
                     str_answer = ans_match.group(1).strip().replace('**', '') if ans_match else "N/A"
                     raw_reward = rew_match.group(1).strip().replace('**', '') if rew_match else "N/A"
                     
-                    # 🛑 CEK MAILBOX DI SINI
-                    is_mailed = "sent to" in raw_reward.lower() or "mailbox" in raw_reward.lower()
-                    
                     str_reward = raw_reward.split("Sent to")[0].strip()
 
                     history = load_json_db(DB_FILE)
@@ -684,7 +681,7 @@ class MySelfBot(discord.Client):
                         session_total_token += ext_val(r'([\d,\.]+)\s*token', rl)
                         session_total_tp += ext_val(r'([\d,\.]+)\s*tp', rl)
                         if "rare" in rl: session_rare_count += 1
-                        if is_mailed: session_mail_count += 1 # 🛑 TAMBAHKAN KE COUNTER
+                        session_mail_count += 1 
                         
                         quiz_solved_counter += 1
                         if quiz_solved_counter >= next_idle_chat_target:
