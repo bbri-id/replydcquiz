@@ -49,6 +49,7 @@ session_total_gold = 0
 session_total_token = 0
 session_total_tp = 0
 session_rare_count = 0
+session_mail_count = 0  # 🛑 NEW: TRACKER MAILBOX
 
 used_idle_chats = set()
 quiz_solved_counter = 0
@@ -181,11 +182,10 @@ HTML_TEMPLATE = """
         .btn-mode { background-color: #5865F2; color: white; }
         .btn-reset { background-color: #4f545c; color: white; }
         
-        /* Layout Grid Baru: Fix Bottom Reward Log */
         .tables-wrapper { display: flex; gap: 10px; flex-grow: 1; min-height: 0; flex-direction: column; }
         .table-container { background-color: #2f3136; border-radius: 6px; border: 1px solid #202225; display: flex; flex-direction: column; min-height: 0;}
-        .chat-log { flex: 1; display: flex; flex-direction: column; } /* Expand full available space */
-        .reward-log { flex: 0 0 auto; display: flex; flex-direction: column; } /* Fixed to content size bottom */
+        .chat-log { flex: 1; display: flex; flex-direction: column; }
+        .reward-log { flex: 0 0 auto; display: flex; flex-direction: column; }
         
         .table-header { background: #202225; padding: 8px; text-align: center; color: #fff; font-weight: bold; font-size: 0.9em; flex-shrink: 0;}
         .table-body-wrapper { overflow-y: auto; flex-grow: 1; }
@@ -230,6 +230,7 @@ HTML_TEMPLATE = """
             <span class="stat-badge">T: <b id="val-token">0</b></span>
             <span class="stat-badge">TP/SS: <b id="val-tp">0</b></span>
             <span class="stat-badge">Rare: <b id="val-rare">0</b></span>
+            <span class="stat-badge">Mail: <b id="val-mail">0</b></span> <!-- 🛑 NEW TRACKER UI -->
         </div>
         <div class="btn-wrapper">
             <button class="btn btn-reset" onclick="requestNotif()" id="notif-btn">🔔 Notif</button>
@@ -281,7 +282,9 @@ HTML_TEMPLATE = """
                 
                 document.getElementById('val-xp').innerText = data.total_xp + "%"; document.getElementById('val-gold').innerText = data.total_gold;
                 document.getElementById('val-token').innerText = data.total_token; document.getElementById('val-tp').innerText = data.total_tp;
-                document.getElementById('val-rare').innerText = data.rare_count; document.getElementById('rl-badge').innerText = data.rate_limit_count;
+                document.getElementById('val-rare').innerText = data.rare_count; 
+                document.getElementById('val-mail').innerText = data.mail_count; // 🛑 NEW DATA INJECTION
+                document.getElementById('rl-badge').innerText = data.rate_limit_count;
                 
                 let modeBtn = document.getElementById('toggle-mode-btn');
                 modeBtn.innerHTML = data.mode === "barbar" ? "🔥 Barbar" : (data.mode === "fast" ? "⚡ Fast" : "🐢 Slow");
@@ -390,7 +393,7 @@ def get_data():
     return jsonify({
         "uptime_str": f"{hours}h {minutes}m", "stealth_str": stealth_str, 
         "total_xp": session_total_xp, "total_gold": session_total_gold, "total_token": session_total_token, 
-        "total_tp": session_total_tp, "rare_count": session_rare_count,
+        "total_tp": session_total_tp, "rare_count": session_rare_count, "mail_count": session_mail_count,
         "loots": loots, "chats": chats, "paused": is_paused, "mode": bot_mode, "rate_limit_count": rate_limit_count,
         "target_channel_id": str(TARGET_CHANNEL_ID)
     })
@@ -412,8 +415,8 @@ def toggle_mode():
 
 @app.route('/api/reset', methods=['POST'])
 def reset_stats():
-    global session_total_xp, session_total_gold, session_total_token, session_total_tp, session_rare_count
-    session_total_xp = session_total_gold = session_total_token = session_total_tp = session_rare_count = 0
+    global session_total_xp, session_total_gold, session_total_token, session_total_tp, session_rare_count, session_mail_count
+    session_total_xp = session_total_gold = session_total_token = session_total_tp = session_rare_count = session_mail_count = 0
     return jsonify({"status": "ok"})
 
 @app.route('/api/reply', methods=['POST'])
@@ -557,7 +560,7 @@ class MySelfBot(discord.Client):
     async def process_discord_event(self, message):
         global is_paused, last_activity_time, bot_mode, last_answered_msg_id, last_solved_msg_id, last_player_chat_time
         global quiz_solved_time, last_admin_activity, last_tag_reply_time, last_clicked_btn_msg_id
-        global session_total_xp, session_total_gold, session_total_token, session_total_tp, session_rare_count
+        global session_total_xp, session_total_gold, session_total_token, session_total_tp, session_rare_count, session_mail_count
         global quiz_solved_counter, next_idle_chat_target, consecutive_losses, next_loss_target
         global session_last_answer_was_typo, last_typed_answer
 
@@ -660,9 +663,14 @@ class MySelfBot(discord.Client):
                 try:
                     ans_match = re.search(r'Answer:\s*([^\n\r]+)', full_text, re.IGNORECASE)
                     rew_match = re.search(r'Reward:\s*([^\n\r]+)', full_text, re.IGNORECASE)
+                    
                     str_answer = ans_match.group(1).strip().replace('**', '') if ans_match else "N/A"
-                    str_reward = rew_match.group(1).strip().replace('**', '') if rew_match else "N/A"
-                    str_reward = str_reward.split("Sent to")[0].strip()
+                    raw_reward = rew_match.group(1).strip().replace('**', '') if rew_match else "N/A"
+                    
+                    # 🛑 CEK MAILBOX DI SINI
+                    is_mailed = "sent to" in raw_reward.lower() or "mailbox" in raw_reward.lower()
+                    
+                    str_reward = raw_reward.split("Sent to")[0].strip()
 
                     history = load_json_db(DB_FILE)
                     if not (len(history) > 0 and history[0].get("answer") == str_answer and history[0].get("reward") == str_reward):
@@ -676,7 +684,8 @@ class MySelfBot(discord.Client):
                         session_total_token += ext_val(r'([\d,\.]+)\s*token', rl)
                         session_total_tp += ext_val(r'([\d,\.]+)\s*tp', rl)
                         if "rare" in rl: session_rare_count += 1
-
+                        if is_mailed: session_mail_count += 1 # 🛑 TAMBAHKAN KE COUNTER
+                        
                         quiz_solved_counter += 1
                         if quiz_solved_counter >= next_idle_chat_target:
                             quiz_solved_counter = 0; next_idle_chat_target = random.randint(5, 20)
