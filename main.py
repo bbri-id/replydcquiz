@@ -180,17 +180,19 @@ HTML_TEMPLATE = """
         .btn-pause { background-color: #ed4245; color: white; }
         .btn-mode { background-color: #5865F2; color: white; }
         .btn-reset { background-color: #4f545c; color: white; }
-        .tables-wrapper { display: flex; gap: 10px; flex-grow: 1; min-height: 0; }
-        .table-container { background-color: #2f3136; border-radius: 6px; border: 1px solid #202225; display: flex; flex-direction: column;}
-        .chat-log { flex: 1.5; }
-        .reward-log { flex: 1; }
+        
+        /* Layout Grid Baru: Fix Bottom Reward Log */
+        .tables-wrapper { display: flex; gap: 10px; flex-grow: 1; min-height: 0; flex-direction: column; }
+        .table-container { background-color: #2f3136; border-radius: 6px; border: 1px solid #202225; display: flex; flex-direction: column; min-height: 0;}
+        .chat-log { flex: 1; display: flex; flex-direction: column; } /* Expand full available space */
+        .reward-log { flex: 0 0 auto; display: flex; flex-direction: column; } /* Fixed to content size bottom */
+        
         .table-header { background: #202225; padding: 8px; text-align: center; color: #fff; font-weight: bold; font-size: 0.9em; flex-shrink: 0;}
         .table-body-wrapper { overflow-y: auto; flex-grow: 1; }
         table { width: 100%; border-collapse: collapse; }
         tbody td { padding: 6px 8px; border-bottom: 1px solid #202225; font-size: 0.9em; word-wrap: break-word; }
         .chat-author { color: #5865F2; font-weight: bold; }
         
-        /* Modifikasi Styling Tombol Reply & Go */
         .reply-btn { background: transparent; border: 1px solid #5865F2; color: #5865F2; border-radius: 3px; cursor: pointer; padding: 2px 5px; font-size: 0.8em; margin-left: 5px; transition: 0.2s;}
         .reply-btn:hover { background: #5865F2; color: #fff; }
         .replied-badge { color: #43b581; font-size: 0.8em; margin-left: 5px; border: 1px solid #43b581; padding: 1px 4px; border-radius: 3px; }
@@ -203,9 +205,14 @@ HTML_TEMPLATE = """
         ::-webkit-scrollbar-thumb { background: #4f545c; border-radius: 4px; }
         @media (max-width: 768px) {
             .tables-wrapper { flex-direction: column; }
-            .chat-log { order: 1; flex: 2; }
-            .reward-log { order: 2; flex: 1; max-height: 200px; } 
+            .chat-log { order: 1; flex: 1; }
+            .reward-log { order: 2; flex: 0 0 auto; max-height: 40%; } 
             .top-info span { font-size: 0.8em; }
+        }
+        @media (min-width: 769px) {
+            .tables-wrapper { flex-direction: row; }
+            .chat-log { flex: 1.5; order: 1; }
+            .reward-log { flex: 1; order: 2; max-height: none; }
         }
     </style>
 </head>
@@ -225,28 +232,46 @@ HTML_TEMPLATE = """
             <span class="stat-badge">Rare: <b id="val-rare">0</b></span>
         </div>
         <div class="btn-wrapper">
+            <button class="btn btn-reset" onclick="requestNotif()" id="notif-btn">🔔 Notif</button>
             <button class="btn btn-reset" onclick="resetStats()">🔄 Reset</button>
             <button id="toggle-mode-btn" class="btn btn-mode" onclick="toggleMode()">⚙️ Mode</button>
             <button id="toggle-btn" class="btn btn-pause" onclick="toggleBot()">⏸️ Pause</button>
         </div>
     </div>
     <div class="tables-wrapper">
-        <div class="table-container reward-log">
-            <div class="table-header">🎁 Log Reward (Max 5)</div>
-            <div class="table-body-wrapper">
-                <table style="table-layout: fixed;"><tbody id="table-body"></tbody></table>
-            </div>
-        </div>
         <div class="table-container chat-log">
             <div class="table-header">💬 Chat Interceptor</div>
             <div class="table-body-wrapper">
                 <table><tbody id="chat-body"></tbody></table>
             </div>
         </div>
+        <div class="table-container reward-log">
+            <div class="table-header">🎁 Log Reward (Max 5)</div>
+            <div class="table-body-wrapper">
+                <table style="table-layout: fixed;"><tbody id="table-body"></tbody></table>
+            </div>
+        </div>
     </div>
 
     <script>
         let lastLootHash = ""; let lastChatHash = "";
+        
+        document.addEventListener("DOMContentLoaded", () => {
+            if ("Notification" in window && Notification.permission === "granted") {
+                document.getElementById("notif-btn").innerText = "🔕 Notif On";
+            }
+        });
+
+        function requestNotif() {
+            if ("Notification" in window) {
+                Notification.requestPermission().then(permission => {
+                    if (permission === "granted") document.getElementById("notif-btn").innerText = "🔕 Notif On";
+                });
+            } else {
+                alert("Browser tidak mendukung push notification.");
+            }
+        }
+
         async function fetchAllData() {
             try {
                 let res = await fetch('/api/data?_=' + new Date().getTime()); let data = await res.json();
@@ -288,6 +313,16 @@ HTML_TEMPLATE = """
 
                 let newChatHash = data.chats.length > 0 ? JSON.stringify(data.chats[0]) : "empty";
                 if (newChatHash !== lastChatHash) {
+                    if (lastChatHash !== "" && lastChatHash !== "empty") {
+                        let lastChatObj = JSON.parse(lastChatHash);
+                        for (let c of data.chats) {
+                            if (c.msg_id === lastChatObj.msg_id) break;
+                            if (c.is_tag && ("Notification" in window) && Notification.permission === "granted") {
+                                new Notification("🔔 Mention Kuis!", { body: c.author + ": " + c.content });
+                            }
+                        }
+                    }
+
                     let html = ""; data.chats.forEach(c => { 
                         let gId = c.guild_id ? c.guild_id : "@me";
                         let cId = c.channel_id ? c.channel_id : data.target_channel_id;
@@ -300,8 +335,10 @@ HTML_TEMPLATE = """
                             actionBtns = `<button class="reply-btn" onclick="replyMsg('${c.msg_id}', '${c.author}')">Balas</button>`;
                         }
                         actionBtns += ` <a href="${jumpUrl}" target="_blank" class="jump-btn">🔗 Go</a>`;
+                        
+                        let rowStyle = c.is_tag ? 'style="background-color: rgba(250, 166, 26, 0.1);"' : '';
 
-                        html += `<tr><td><span style="font-size:0.7em;color:#72767d">${c.time.split(' ')[0]}</span> <span class="chat-author">${c.author}</span>: ${c.content} <div class="action-group">${actionBtns}</div></td></tr>`; 
+                        html += `<tr ${rowStyle}><td><span style="font-size:0.7em;color:#72767d">${c.time.split(' ')[0]}</span> <span class="chat-author">${c.author}</span>: ${c.content} <div class="action-group">${actionBtns}</div></td></tr>`; 
                     });
                     document.getElementById('chat-body').innerHTML = html; lastChatHash = newChatHash;
                 }
@@ -539,13 +576,16 @@ class MySelfBot(discord.Client):
             elif "capek" in message.content.lower() and is_paused: is_paused = False; last_activity_time = datetime.now(timezone.utc)
             return
 
-        # INTERCEPTOR PLAYER (Merekam Guild ID & Channel ID untuk Jump URL)
+        # INTERCEPTOR PLAYER 
         if not is_me and not message.author.bot:
             if message.content and not message.content.startswith('!'):
                 wib_time = datetime.now(timezone.utc) + timedelta(hours=7)
                 chat_history = load_json_db(CHAT_DB_FILE)
                 
                 guild_id = str(message.guild.id) if getattr(message, 'guild', None) else "@me"
+                is_mentioned = str(self.user.id) in message.content
+                is_replied = message.reference and getattr(message.reference.resolved, 'author', None) and message.reference.resolved.author.id == self.user.id
+                is_tag = bool(is_mentioned or is_replied)
                 
                 chat_history.insert(0, {
                     "time": wib_time.strftime('%H:%M:%S WIB'), 
@@ -554,14 +594,15 @@ class MySelfBot(discord.Client):
                     "msg_id": str(message.id), 
                     "guild_id": guild_id,
                     "channel_id": str(message.channel.id),
-                    "replied": False
+                    "replied": False,
+                    "is_tag": is_tag
                 })
                 save_json_db(CHAT_DB_FILE, chat_history)
 
                 last_player_chat_time = datetime.now(timezone.utc)
                 if bot_mode == "fast": bot_mode = "slow"
 
-                if str(self.user.id) in message.content or (message.reference and getattr(message.reference.resolved, 'author', None) and message.reference.resolved.author.id == self.user.id):
+                if is_tag:
                     if (datetime.now(timezone.utc) - last_tag_reply_time).total_seconds() >= 120.0:
                         last_tag_reply_time = datetime.now(timezone.utc)
                         self.loop.create_task(self.send_tag_reply(message.channel))
