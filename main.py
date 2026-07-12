@@ -29,7 +29,7 @@ if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID or not TARGET_C
 
 START_TIME_UTC = datetime.now(timezone.utc)
 last_activity_time = datetime.now(timezone.utc)
-last_send_time = datetime.now(timezone.utc) - timedelta(seconds=60)
+last_send_time = datetime.now(timezone.utc) - timedelta(seconds=60) 
 
 last_player_chat_time = datetime.now(timezone.utc) - timedelta(minutes=10) 
 last_admin_activity = datetime.now(timezone.utc) - timedelta(minutes=15) 
@@ -64,7 +64,7 @@ last_typed_answer = ""
 web_reply_queue = []
 
 # 🛑 ATURAN SLOWMODE ADMIN
-COOLDOWN_SLOWMODE = 32.0 
+COOLDOWN_SLOWMODE = 31.0 # 30 detik + 1 detik safety margin
 
 # =========================================================
 # FUNGSI BYPASS API
@@ -141,7 +141,7 @@ async def generate_gemini_text(prompt):
     return await asyncio.to_thread(fetch)
 
 # =========================================================
-# 3. SETUP WEB SERVER MINI
+# 3. SETUP WEB SERVER MINI (PWA READY)
 # =========================================================
 app = Flask('')
 DB_FILE = "loot_history.json"
@@ -497,18 +497,18 @@ class MySelfBot(discord.Client):
             time_since_admin = (datetime.now(timezone.utc) - last_admin_activity).total_seconds()
             time_since_player = (datetime.now(timezone.utc) - last_player_chat_time).total_seconds()
             
-            # 🛑 VERY SLOW MODE TERMASUK DI SINI AGAR BISA AUTO RESTORE KE FAST
             if bot_mode in ["slow", "very_slow"] and time_since_player >= 300.0 and time_since_admin >= 600.0:
                 bot_mode = "fast"
                 logging.warning("[AUTO MODE] Kondisi aman (Sepi). Kembali ke FAST MODE.")
 
-    # 🛡️ FUNGSI SMART SEND (BYPASS SLOWMODE ADMIN)
+    # 🛡️ FUNGSI SMART SEND 
     async def smart_send(self, channel, content=None, stickers=None, is_reply=False, reference_msg=None):
         global last_send_time
         async with self.send_lock:
             now = datetime.now(timezone.utc)
             diff = (now - last_send_time).total_seconds()
             
+            # Jika bot mencoba mengirim pesan di bawah masa cooldown, REM!
             if diff < COOLDOWN_SLOWMODE:
                 wait_t = COOLDOWN_SLOWMODE - diff
                 logging.warning(f"[COOLDOWN SHIELD] Menahan chat selama {wait_t:.1f}s karena Slowmode aktif!")
@@ -539,7 +539,7 @@ class MySelfBot(discord.Client):
             await asyncio.sleep(0.5)
 
     async def send_random_sticker(self, channel):
-        if bot_mode == "very_slow": return # 🛑 MATI DI VERY SLOW
+        if bot_mode == "very_slow": return
         try:
             if channel.guild and channel.guild.stickers:
                 stk = random.choice(channel.guild.stickers)
@@ -547,7 +547,7 @@ class MySelfBot(discord.Client):
         except: pass
 
     async def send_idle_chat(self):
-        if bot_mode == "very_slow": return # 🛑 MATI DI VERY SLOW
+        if bot_mode == "very_slow": return
         wib = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime('%H:%M WIB')
         prompt = f"Waktu sekarang {wib}. Buat 1 keluhan singkat gamer gen-Z yang pegel ngetik kuis Discord terus. Max 5 kata. Huruf kecil. HANYA berikan output teksnya saja."
         msg = await generate_gemini_text(prompt)
@@ -557,7 +557,7 @@ class MySelfBot(discord.Client):
             if channel: await self.smart_send(channel, content=msg)
 
     async def send_loss_streak_chat(self):
-        if bot_mode == "very_slow": return # 🛑 MATI DI VERY SLOW
+        if bot_mode == "very_slow": return
         global session_last_answer_was_typo
         wib = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime('%H:%M WIB')
         
@@ -574,7 +574,7 @@ class MySelfBot(discord.Client):
             if channel: await self.smart_send(channel, content=msg)
 
     async def send_tag_reply(self, channel):
-        if bot_mode == "very_slow": return # 🛑 MATI DI VERY SLOW
+        if bot_mode == "very_slow": return
         prompt = "Ada player discord ngetag kamu. Balas santai max 2 kata. Huruf kecil."
         msg = await generate_gemini_text(prompt)
         if msg:
@@ -664,15 +664,28 @@ class MySelfBot(discord.Client):
                 
             if target_btn and message.id != last_clicked_btn_msg_id and not is_paused:
                 last_clicked_btn_msg_id = message.id
-                delay = random.uniform(2.0, 4.0) if bot_mode == "slow" else (random.uniform(1.0, 2.0) if bot_mode == "fast" else random.uniform(0.3, 0.8))
                 
-                async def execute_main_click():
-                    await asyncio.sleep(delay)
+                async def execute_synchronized_click():
+                    now = datetime.now(timezone.utc)
+                    diff = (now - last_send_time).total_seconds()
+                    
+                    if diff < COOLDOWN_SLOWMODE:
+                        wait_btn = (COOLDOWN_SLOWMODE - diff) - 1.5
+                        if wait_btn > 0:
+                            logging.warning(f"[SYNC] Menahan tombol Start. Eksekusi dalam {wait_btn:.1f}s...")
+                            await asyncio.sleep(wait_btn)
+                    
+                    # 🛑 MULAI NGETIK SEBELUM KLIK TOMBOL (GERTAKAN)
+                    try: await message.channel.trigger_typing()
+                    except: pass
+                    
                     try:
                         if not await force_click_button(self, message, target_btn): await target_btn.click()
+                        logging.warning("[MAIN BUTTON] Klik sinkronisasi berhasil dikirim!")
                         self.loop.create_task(trigger_tumbal_click(message.channel.id, message.id))
                     except: pass
-                self.loop.create_task(execute_main_click())
+                
+                self.loop.create_task(execute_synchronized_click())
 
         # =========================================================
         # ALUR 2: KUIS SELESAI & KALKULASI
@@ -761,30 +774,23 @@ class MySelfBot(discord.Client):
                 session_last_answer_was_typo = is_typo 
                 last_typed_answer = final_answer 
                 
-                async with self.send_lock:
-                    # 🛑 LOGIKA DELAY BARU UNTUK VERY SLOW MODE
-                    if bot_mode == "very_slow":
-                        delay = random.uniform(0.5, 2.0)
-                    else:
-                        reaction_time = random.uniform(1.5, 3.0) if bot_mode == "slow" else (random.uniform(0.5, 1.0) if bot_mode == "fast" else random.uniform(0.1, 0.3))
-                        typing_speed = random.uniform(0.2, 0.3) if bot_mode == "slow" else (random.uniform(0.10, 0.18) if bot_mode == "fast" else random.uniform(0.05, 0.08))
-                        delay = reaction_time + (len(final_answer) * typing_speed)
+                async def execute_smart_answer():
+                    # 🛑 THE GOLDEN RATIO: 0.5 - 1.0 Detik delay setelah soal muncul
+                    if bot_mode == "very_slow": extra_delay = random.uniform(0.5, 1.0)
+                    elif bot_mode == "barbar": extra_delay = random.uniform(0.2, 0.5)
+                    elif bot_mode == "fast": extra_delay = random.uniform(0.5, 1.0)
+                    else: extra_delay = random.uniform(1.5, 3.0)
                     
-                    async def execute_smart_answer():
-                        async with message.channel.typing():
-                            await asyncio.sleep(delay)
+                    async with message.channel.typing():
+                        await asyncio.sleep(extra_delay)
+                    
+                    if quiz_solved_time > current_quiz_start: 
+                        logging.warning("[ABORT] Kuis sudah diselesaikan orang lain. Batal kirim agar hemat cooldown!")
+                        return 
                         
-                        # 🛑 STRICT ABORT: Jika sudah ada yang jawab, jangan buang cooldown!
-                        if quiz_solved_time > current_quiz_start:
-                            if bot_mode == "very_slow":
-                                logging.warning("[ABORT] Mode VERY SLOW: Kuis sudah diselesaikan orang lain. Batal kirim agar cooldown aman.")
-                                return
-                            elif random.random() >= 0.25:
-                                return
-                                
-                        await self.smart_send(message.channel, content=final_answer)
-                    
-                    self.loop.create_task(execute_smart_answer())
+                    await self.smart_send(message.channel, content=final_answer)
+                
+                self.loop.create_task(execute_smart_answer())
 
     async def on_message(self, message): await self.process_discord_event(message)
     async def on_message_edit(self, before, after): await self.process_discord_event(after)
