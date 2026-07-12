@@ -29,7 +29,7 @@ if not TOKEN_DISCORD or not API_KEY_GEMINI or not TARGET_USER_ID or not TARGET_C
 
 START_TIME_UTC = datetime.now(timezone.utc)
 last_activity_time = datetime.now(timezone.utc)
-last_send_time = datetime.now(timezone.utc)
+last_send_time = datetime.now(timezone.utc) - timedelta(seconds=60)
 
 last_player_chat_time = datetime.now(timezone.utc) - timedelta(minutes=10) 
 last_admin_activity = datetime.now(timezone.utc) - timedelta(minutes=15) 
@@ -49,7 +49,7 @@ session_total_gold = 0
 session_total_token = 0
 session_total_tp = 0
 session_rare_count = 0
-session_mail_count = 0  # Tracker untuk Total Jawaban Benar (Wins)
+session_mail_count = 0
 
 used_idle_chats = set()
 quiz_solved_counter = 0
@@ -58,11 +58,13 @@ next_idle_chat_target = random.randint(5, 20)
 consecutive_losses = 0
 next_loss_target = random.randint(5, 7)
 
-# Flag Psikologi Typo & Memory
 session_last_answer_was_typo = False
 last_typed_answer = ""
 
 web_reply_queue = []
+
+# 🛑 ATURAN SLOWMODE ADMIN
+COOLDOWN_SLOWMODE = 32.0 
 
 # =========================================================
 # FUNGSI BYPASS API
@@ -139,7 +141,7 @@ async def generate_gemini_text(prompt):
     return await asyncio.to_thread(fetch)
 
 # =========================================================
-# 3. SETUP WEB SERVER MINI (PWA READY)
+# 3. SETUP WEB SERVER MINI
 # =========================================================
 app = Flask('')
 DB_FILE = "loot_history.json"
@@ -287,7 +289,10 @@ HTML_TEMPLATE = """
                 document.getElementById('rl-badge').innerText = data.rate_limit_count;
                 
                 let modeBtn = document.getElementById('toggle-mode-btn');
-                modeBtn.innerHTML = data.mode === "barbar" ? "🔥 Barbar" : (data.mode === "fast" ? "⚡ Fast" : "🐢 Slow");
+                if (data.mode === "barbar") modeBtn.innerHTML = "🔥 Barbar";
+                else if (data.mode === "fast") modeBtn.innerHTML = "⚡ Fast";
+                else if (data.mode === "very_slow") modeBtn.innerHTML = "🐌 V. Slow";
+                else modeBtn.innerHTML = "🐢 Slow";
                 document.getElementById('mode-badge').innerText = data.mode;
                 
                 let toggleBtn = document.getElementById('toggle-btn');
@@ -408,7 +413,8 @@ def toggle_state():
 @app.route('/api/toggle_mode', methods=['POST'])
 def toggle_mode():
     global bot_mode
-    if bot_mode == "slow": bot_mode = "fast"
+    if bot_mode == "slow": bot_mode = "very_slow"
+    elif bot_mode == "very_slow": bot_mode = "fast"
     elif bot_mode == "fast": bot_mode = "barbar"
     else: bot_mode = "slow"
     return jsonify({"status": "ok"})
@@ -491,9 +497,34 @@ class MySelfBot(discord.Client):
             time_since_admin = (datetime.now(timezone.utc) - last_admin_activity).total_seconds()
             time_since_player = (datetime.now(timezone.utc) - last_player_chat_time).total_seconds()
             
-            if bot_mode == "slow" and time_since_player >= 300.0 and time_since_admin >= 600.0:
+            # 🛑 VERY SLOW MODE TERMASUK DI SINI AGAR BISA AUTO RESTORE KE FAST
+            if bot_mode in ["slow", "very_slow"] and time_since_player >= 300.0 and time_since_admin >= 600.0:
                 bot_mode = "fast"
                 logging.warning("[AUTO MODE] Kondisi aman (Sepi). Kembali ke FAST MODE.")
+
+    # 🛡️ FUNGSI SMART SEND (BYPASS SLOWMODE ADMIN)
+    async def smart_send(self, channel, content=None, stickers=None, is_reply=False, reference_msg=None):
+        global last_send_time
+        async with self.send_lock:
+            now = datetime.now(timezone.utc)
+            diff = (now - last_send_time).total_seconds()
+            
+            if diff < COOLDOWN_SLOWMODE:
+                wait_t = COOLDOWN_SLOWMODE - diff
+                logging.warning(f"[COOLDOWN SHIELD] Menahan chat selama {wait_t:.1f}s karena Slowmode aktif!")
+                async with channel.typing():
+                    await asyncio.sleep(wait_t)
+            
+            try:
+                if is_reply and reference_msg: await reference_msg.reply(content)
+                elif content: await channel.send(content)
+                elif stickers: await channel.send(stickers=stickers)
+                
+                last_send_time = datetime.now(timezone.utc)
+                return True
+            except Exception as e:
+                logging.warning(f"[SEND ERROR] Gagal mengirim pesan: {e}")
+                return False
 
     async def process_web_queue(self):
         while not self.is_closed():
@@ -503,33 +534,30 @@ class MySelfBot(discord.Client):
                 if channel:
                     try:
                         msg = await channel.fetch_message(int(req['msg_id']))
-                        async with channel.typing():
-                            await asyncio.sleep(1.5)
-                            await msg.reply(req['content'])
+                        await self.smart_send(channel, content=req['content'], is_reply=True, reference_msg=msg)
                     except: pass
             await asyncio.sleep(0.5)
 
     async def send_random_sticker(self, channel):
+        if bot_mode == "very_slow": return # 🛑 MATI DI VERY SLOW
         try:
             if channel.guild and channel.guild.stickers:
                 stk = random.choice(channel.guild.stickers)
-                await channel.send(stickers=[stk])
-                logging.warning("[AI CHAT] Mengirim random sticker.")
+                await self.smart_send(channel, stickers=[stk])
         except: pass
 
     async def send_idle_chat(self):
+        if bot_mode == "very_slow": return # 🛑 MATI DI VERY SLOW
         wib = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime('%H:%M WIB')
         prompt = f"Waktu sekarang {wib}. Buat 1 keluhan singkat gamer gen-Z yang pegel ngetik kuis Discord terus. Max 5 kata. Huruf kecil. HANYA berikan output teksnya saja."
         msg = await generate_gemini_text(prompt)
         if msg:
             await asyncio.sleep(random.uniform(2.0, 5.0))
             channel = self.get_channel(TARGET_CHANNEL_ID)
-            if channel:
-                async with channel.typing():
-                    await asyncio.sleep(2)
-                    await channel.send(msg)
+            if channel: await self.smart_send(channel, content=msg)
 
     async def send_loss_streak_chat(self):
+        if bot_mode == "very_slow": return # 🛑 MATI DI VERY SLOW
         global session_last_answer_was_typo
         wib = (datetime.now(timezone.utc) + timedelta(hours=7)).strftime('%H:%M WIB')
         
@@ -543,19 +571,15 @@ class MySelfBot(discord.Client):
         if msg:
             await asyncio.sleep(random.uniform(3.0, 6.0))
             channel = self.get_channel(TARGET_CHANNEL_ID)
-            if channel:
-                async with channel.typing():
-                    await asyncio.sleep(2)
-                    await channel.send(msg)
+            if channel: await self.smart_send(channel, content=msg)
 
     async def send_tag_reply(self, channel):
+        if bot_mode == "very_slow": return # 🛑 MATI DI VERY SLOW
         prompt = "Ada player discord ngetag kamu. Balas santai max 2 kata. Huruf kecil."
         msg = await generate_gemini_text(prompt)
         if msg:
             await asyncio.sleep(random.uniform(2.0, 6.0))
-            async with channel.typing():
-                await asyncio.sleep(1.5)
-                await channel.send(msg)
+            await self.smart_send(channel, content=msg)
 
     async def process_discord_event(self, message):
         global is_paused, last_activity_time, bot_mode, last_answered_msg_id, last_solved_msg_id, last_player_chat_time
@@ -738,17 +762,29 @@ class MySelfBot(discord.Client):
                 last_typed_answer = final_answer 
                 
                 async with self.send_lock:
-                    reaction_time = random.uniform(1.5, 3.0) if bot_mode == "slow" else (random.uniform(0.5, 1.0) if bot_mode == "fast" else random.uniform(0.1, 0.3))
-                    typing_speed = random.uniform(0.2, 0.3) if bot_mode == "slow" else (random.uniform(0.10, 0.18) if bot_mode == "fast" else random.uniform(0.05, 0.08))
+                    # 🛑 LOGIKA DELAY BARU UNTUK VERY SLOW MODE
+                    if bot_mode == "very_slow":
+                        delay = random.uniform(0.5, 2.0)
+                    else:
+                        reaction_time = random.uniform(1.5, 3.0) if bot_mode == "slow" else (random.uniform(0.5, 1.0) if bot_mode == "fast" else random.uniform(0.1, 0.3))
+                        typing_speed = random.uniform(0.2, 0.3) if bot_mode == "slow" else (random.uniform(0.10, 0.18) if bot_mode == "fast" else random.uniform(0.05, 0.08))
+                        delay = reaction_time + (len(final_answer) * typing_speed)
                     
-                    delay = reaction_time + (len(final_answer) * typing_speed)
-                    
-                    async with message.channel.typing():
-                        await asyncio.sleep(delay)
+                    async def execute_smart_answer():
+                        async with message.channel.typing():
+                            await asyncio.sleep(delay)
                         
-                    if quiz_solved_time > current_quiz_start and random.random() >= 0.25: return 
-                    try: await message.channel.send(final_answer)
-                    except: pass
+                        # 🛑 STRICT ABORT: Jika sudah ada yang jawab, jangan buang cooldown!
+                        if quiz_solved_time > current_quiz_start:
+                            if bot_mode == "very_slow":
+                                logging.warning("[ABORT] Mode VERY SLOW: Kuis sudah diselesaikan orang lain. Batal kirim agar cooldown aman.")
+                                return
+                            elif random.random() >= 0.25:
+                                return
+                                
+                        await self.smart_send(message.channel, content=final_answer)
+                    
+                    self.loop.create_task(execute_smart_answer())
 
     async def on_message(self, message): await self.process_discord_event(message)
     async def on_message_edit(self, before, after): await self.process_discord_event(after)
